@@ -65,7 +65,7 @@ export default function App() {
         <div className="brand">
           <Wallet size={24} color="#E0A458" />
           <div>
-            <div className="brand-title">工程財務記帳台</div>
+            <div className="brand-title">記帳台</div>
             <div className="brand-sub">收支・差旅・預算・回饋</div>
           </div>
         </div>
