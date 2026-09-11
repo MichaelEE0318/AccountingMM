@@ -85,9 +85,21 @@ input, select { font-family: inherit; font-size: 16px; } /* 16px 避免 iOS 自�
 /* 避免 iOS 日期欄位撐爆格線造成重疊 */
 .field { min-width: 0; }
 .field input, .field select { width: 100%; min-width: 0; max-width: 100%; }
+/* iOS Safari 的 date 輸入框有內建最小寬度，會撐出卡片。強制歸零外觀並綁死寬度 */
+.field input[type="date"] {
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+/* 讓 grid 欄位可以縮到比內容還窄，避免日期框把整欄撐寬 */
+.form-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 /* 窄螢幕改單欄堆疊，日期欄才有足夠寬度不擠壓 */
 @media (max-width: 430px) {
-  .form-grid, .form-grid.travel, .form-grid.travel-item { grid-template-columns: 1fr; }
+  .form-grid, .form-grid.travel, .form-grid.travel-item { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* Buttons */
