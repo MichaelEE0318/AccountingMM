@@ -82,6 +82,13 @@ input, select { font-family: inherit; font-size: 16px; } /* 16px 避免 iOS 自�
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
 .form-grid.travel { grid-template-columns: 1fr 1fr; }
 .form-grid.travel-item { grid-template-columns: 1fr 1fr; margin: 14px 0 10px; }
+/* 避免 iOS 日期欄位撐爆格線造成重疊 */
+.field { min-width: 0; }
+.field input, .field select { width: 100%; min-width: 0; max-width: 100%; }
+/* 窄螢幕改單欄堆疊，日期欄才有足夠寬度不擠壓 */
+@media (max-width: 430px) {
+  .form-grid, .form-grid.travel, .form-grid.travel-item { grid-template-columns: 1fr; }
+}
 
 /* Buttons */
 .primary-btn, .teal-btn, .green-btn, .danger-btn, .dark-btn, .ghost-btn {
