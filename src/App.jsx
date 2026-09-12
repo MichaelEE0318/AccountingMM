@@ -197,15 +197,15 @@ function Dashboard({ transactions, month, budgets, cards }) {
             </LineChart>
           </ResponsiveContainer>
         ) : (
-          <ResponsiveContainer width="100%" height={240}>
-            <ComposedChart data={trend} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
+          <ResponsiveContainer width="100%" height={280}>
+            <ComposedChart data={trend} margin={{ top: 8, right: 2, left: -14, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#EDE9E0" />
-              <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#7A857B" }} interval={3} />
-              <YAxis yAxisId="left" tick={{ fontSize: 10, fill: "#7A857B" }} tickFormatter={(v) => (v / 1000) + "k"} />
-              <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: "#B5533E" }} tickFormatter={(v) => (v / 1000) + "k"} />
+              <XAxis dataKey="label" tick={{ fontSize: 9, fill: "#7A857B" }} interval={4} />
+              <YAxis yAxisId="left" tick={{ fontSize: 9, fill: "#7A857B" }} width={34} tickFormatter={(v) => Math.round(v / 1000) + "k"} />
+              <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 9, fill: "#B5533E" }} width={30} tickFormatter={(v) => Math.round(v / 1000) + "k"} />
               <Tooltip formatter={(v) => fmt(v)} labelFormatter={(l) => `${month}-${l}`} />
-              <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Bar yAxisId="right" dataKey="expense" name="當日支出" fill="#E0A458" radius={[2, 2, 0, 0]} maxBarSize={14} />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Bar yAxisId="right" dataKey="expense" name="當日支出" fill="#E0A458" radius={[2, 2, 0, 0]} maxBarSize={12} />
               <Line yAxisId="left" type="monotone" dataKey="cumExpense" name="累積支出" stroke="#B5533E" strokeWidth={2} dot={false} />
               <Line yAxisId="left" type="monotone" dataKey="balance" name="累積結餘" stroke="#5A7D4E" strokeWidth={2} dot={false} />
             </ComposedChart>
@@ -369,7 +369,7 @@ function Transactions({ transactions, setTransactions, month, cards }) {
               return (
                 <div key={t.id} className="tx-row">
                   <div className="tx-main">
-                    <span className="mono tx-fulldate">{t.date}</span>
+                    <span className="mono tx-fulldate">{t.date.slice(8, 10)}</span>
                     <span className={"chip " + t.type}>{t.category}</span>
                     <span className="tx-note">
                       {t.cardId && <span className="card-tag"><CreditCard size={11} />{cardName(t.cardId, cards)}</span>}
