@@ -22,12 +22,12 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
 const monthKey = (d) => (d || "").slice(0, 7);
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
-// 回饋計算：找出該卡回饋率，回傳現金回饋
+// 回饋計算：找出該卡回饋率，回傳現金回饋（單筆四捨五入到整數）
 const rebateOf = (tx, cards) => {
   if (tx.type !== "expense" || !tx.cardId) return 0;
   const card = cards.find((c) => c.id === tx.cardId);
   if (!card) return 0;
-  return tx.amount * (card.rate || 0) / 100;
+  return Math.round(tx.amount * (card.rate || 0) / 100);
 };
 const cardName = (id, cards) => cards.find((c) => c.id === id)?.name || "";
 
@@ -65,7 +65,7 @@ export default function App() {
         <div className="brand">
           <Wallet size={24} color="#E0A458" />
           <div>
-            <div className="brand-title">記帳台</div>
+            <div className="brand-title">工程財務記帳台</div>
             <div className="brand-sub">收支・差旅・預算・回饋</div>
           </div>
         </div>
@@ -163,7 +163,7 @@ function Dashboard({ transactions, month, budgets, cards }) {
         <Stat label="本月收入" value={income} color="#2C6E7F" icon={TrendingUp} />
         <Stat label="本月支出" value={expense} color="#B5533E" icon={TrendingDown} />
         <Stat label="結餘" value={balance} color={balance >= 0 ? "#5A7D4E" : "#B5533E"} icon={Wallet} highlight />
-        <Stat label="本月回饋" value={monthRebate} color="#8C6A9E" icon={CreditCard} decimal />
+        <Stat label="本月回饋" value={monthRebate} color="#8C6A9E" icon={CreditCard} />
       </div>
 
       {overBudget.length > 0 && (
@@ -211,7 +211,7 @@ function Dashboard({ transactions, month, budgets, cards }) {
           <div className="pie-row">
             <ResponsiveContainer width="100%" height={200}>
               <PieChart>
-                <Pie data={byCat} dataKey="value" nameKey="name" innerRadius={42} outerRadius={75} paddingAngle={2}>
+                <Pie data={byCat} dataKey="value" nameKey="name" innerRadius={42} outerRadius={75} paddingAngle={2} isAnimationActive={false}>
                   {byCat.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
                 </Pie>
                 <Tooltip formatter={(v) => fmt(v)} />
@@ -304,7 +304,7 @@ function Transactions({ transactions, setTransactions, month, cards }) {
         </div>
         <button className="primary-btn full" onClick={add}><Plus size={18} /> 加入</button>
         {form.type === "expense" && form.cardId && form.amount > 0 && (
-          <div className="rebate-preview">預估回饋：<span className="mono">{fmt2(+form.amount * (cards.find((c) => c.id === form.cardId)?.rate || 0) / 100)}</span></div>
+          <div className="rebate-preview">預估回饋：<span className="mono">{fmt(Math.round(+form.amount * (cards.find((c) => c.id === form.cardId)?.rate || 0) / 100))}</span></div>
         )}
         <div className="hint">CSV 格式：日期,類型,分類,金額,備註（第一列可為標題）</div>
       </Card>
@@ -327,7 +327,7 @@ function Transactions({ transactions, setTransactions, month, cards }) {
                   <div className="tx-right">
                     <span className="tx-nums">
                       <span className={"mono tx-amt " + t.type}>{t.type === "income" ? "+" : "−"}{fmt(t.amount)}</span>
-                      {reb > 0 && <span className="mono tx-reb">回饋 {fmt2(reb)}</span>}
+                      {reb > 0 && <span className="mono tx-reb">回饋 {fmt(reb)}</span>}
                     </span>
                     <button className="icon-btn" onClick={() => remove(t.id)}><Trash2 size={16} /></button>
                   </div>
@@ -356,7 +356,7 @@ function Cards({ cards, setCards, transactions, month }) {
   const perCard = cards.map((c) => {
     const txs = mtx.filter((t) => t.cardId === c.id);
     const spent = txs.reduce((s, t) => s + t.amount, 0);
-    const rebate = spent * c.rate / 100;
+    const rebate = txs.reduce((s, t) => s + rebateOf(t, cards), 0); // 加總各筆四捨五入後的回饋
     return { ...c, spent, rebate, count: txs.length };
   });
 
@@ -385,13 +385,13 @@ function Cards({ cards, setCards, transactions, month }) {
                   </div>
                 </div>
                 <div className="card-tail">
-                  <span className="mono card-rebate">{fmt2(c.rebate)}</span>
+                  <span className="mono card-rebate">{fmt(c.rebate)}</span>
                   <button className="icon-btn" onClick={() => remove(c.id)}><Trash2 size={16} /></button>
                 </div>
               </div>
             ))}
             <div className="card-total">
-              本月回饋合計 <span className="mono">{fmt2(perCard.reduce((s, c) => s + c.rebate, 0))}</span>
+              本月回饋合計 <span className="mono">{fmt(perCard.reduce((s, c) => s + c.rebate, 0))}</span>
             </div>
           </div>
         )}
@@ -423,8 +423,14 @@ function Travel({ trips, setTrips, setTransactions }) {
 
   const markReimbursed = (trip) => {
     const total = trip.items.reduce((s, x) => s + x.amount, 0);
-    if (!trip.reimbursed && total > 0) {
-      setTransactions((p) => [{ id: uid(), date: trip.end, type: "expense", category: "差旅", amount: total, note: `差旅：${trip.name}`, cardId: "" }, ...p]);
+    if (!trip.reimbursed) {
+      // 標記已報帳 = 收到報帳退款，記一筆收入（用 refTripId 綁定此行程，方便取消時精準刪除）
+      if (total > 0) {
+        setTransactions((p) => [{ id: uid(), date: trip.end, type: "income", category: "報帳退款", amount: total, note: `差旅報帳：${trip.name}`, cardId: "", refTripId: trip.id }, ...p]);
+      }
+    } else {
+      // 取消報帳狀態 = 沖掉那筆退款收入
+      setTransactions((p) => p.filter((t) => t.refTripId !== trip.id));
     }
     setTrips((p) => p.map((t) => t.id === trip.id ? { ...t, reimbursed: !t.reimbursed } : t));
   };
@@ -479,13 +485,13 @@ function Travel({ trips, setTrips, setTransactions }) {
                     </div>
                     {byType.length > 0 && (
                       <ResponsiveContainer width="100%" height={150}>
-                        <PieChart><Pie data={byType} dataKey="value" nameKey="name" outerRadius={55} label={{ fontSize: 11 }}>{byType.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}</Pie><Tooltip formatter={(v) => fmt(v)} /></PieChart>
+                        <PieChart><Pie data={byType} dataKey="value" nameKey="name" outerRadius={55} isAnimationActive={false}>{byType.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}</Pie><Tooltip formatter={(v) => fmt(v)} /><Legend wrapperStyle={{ fontSize: 11 }} /></PieChart>
                       </ResponsiveContainer>
                     )}
                   </>
                 )}
                 <div className="trip-actions">
-                  <button className={"full " + (trip.reimbursed ? "ghost-btn" : "green-btn")} onClick={() => markReimbursed(trip)}><Check size={15} /> {trip.reimbursed ? "取消報帳狀態" : "標記已報帳並記入收支"}</button>
+                  <button className={"full " + (trip.reimbursed ? "ghost-btn" : "green-btn")} onClick={() => markReimbursed(trip)}><Check size={15} /> {trip.reimbursed ? "取消報帳（沖銷收入）" : "標記已報帳並記入收入"}</button>
                   <button className="danger-btn full" onClick={() => removeTrip(trip.id)}><Trash2 size={15} /> 刪除行程</button>
                 </div>
               </div>
@@ -587,7 +593,7 @@ function Reports({ transactions, trips, month, cards, setTransactions, setTrips,
       ...transactions.filter((t) => monthKey(t.date) === month).sort((a, b) => a.date.localeCompare(b.date))
         .map((t) => {
           const card = cards.find((c) => c.id === t.cardId);
-          return [t.date, t.type === "income" ? "收入" : "支出", t.category, t.amount, card?.name || "", card?.rate ?? "", rebateOf(t, cards).toFixed(1), t.note];
+          return [t.date, t.type === "income" ? "收入" : "支出", t.category, t.amount, card?.name || "", card?.rate ?? "", rebateOf(t, cards), t.note];
         })];
     exportCSV(rows, `收支明細_${month}.csv`);
   };
@@ -595,7 +601,7 @@ function Reports({ transactions, trips, month, cards, setTransactions, setTrips,
     const rows = [["日期", "分類", "金額", "卡片", "回饋率%", "回饋金額", "備註"]];
     transactions.filter((t) => monthKey(t.date) === month && t.type === "expense" && t.cardId)
       .sort((a, b) => a.date.localeCompare(b.date))
-      .forEach((t) => { const card = cards.find((c) => c.id === t.cardId); rows.push([t.date, t.category, t.amount, card?.name || "", card?.rate ?? "", rebateOf(t, cards).toFixed(1), t.note]); });
+      .forEach((t) => { const card = cards.find((c) => c.id === t.cardId); rows.push([t.date, t.category, t.amount, card?.name || "", card?.rate ?? "", rebateOf(t, cards), t.note]); });
     exportCSV(rows, `信用卡回饋明細_${month}.csv`);
   };
   const exportTravel = () => {
@@ -624,7 +630,7 @@ function Reports({ transactions, trips, month, cards, setTransactions, setTrips,
           <Summary label="收入" value={income} />
           <Summary label="支出" value={expense} />
           <Summary label="結餘" value={income - expense} accent />
-          <Summary label="信用卡回饋" value={rebate} decimal />
+          <Summary label="信用卡回饋" value={rebate} />
           <Summary label="待報帳差旅" value={pendingTravel} warn />
         </div>
         <div className="export-btns">
