@@ -5,7 +5,7 @@ import {
 } from "recharts";
 import {
   Plus, Trash2, Upload, Download, Plane, Wallet, AlertTriangle,
-  TrendingUp, TrendingDown, FileText, X, Check, CreditCard,
+  TrendingUp, TrendingDown, FileText, X, Check, CreditCard, Pencil,
 } from "lucide-react";
 
 // ---------- Constants ----------
@@ -251,6 +251,8 @@ function Stat({ label, value, color, icon: Icon, highlight, decimal }) {
 // ---------- Transactions ----------
 function Transactions({ transactions, setTransactions, month, cards }) {
   const [form, setForm] = useState({ date: todayISO(), type: "expense", category: "餐飲", amount: "", note: "", cardId: "" });
+  const [editId, setEditId] = useState(null);
+  const [draft, setDraft] = useState(null);
   const fileRef = useRef();
 
   const add = () => {
@@ -259,6 +261,14 @@ function Transactions({ transactions, setTransactions, month, cards }) {
     setForm((f) => ({ ...f, amount: "", note: "" }));
   };
   const remove = (id) => setTransactions((p) => p.filter((t) => t.id !== id));
+
+  const startEdit = (t) => { setEditId(t.id); setDraft({ ...t, amount: String(t.amount) }); };
+  const cancelEdit = () => { setEditId(null); setDraft(null); };
+  const saveEdit = () => {
+    if (!draft.amount || +draft.amount <= 0) return;
+    setTransactions((p) => p.map((t) => t.id === editId ? { ...draft, amount: +draft.amount } : t));
+    cancelEdit();
+  };
 
   const importCSV = (e) => {
     const file = e.target.files[0]; if (!file) return;
@@ -323,9 +333,43 @@ function Transactions({ transactions, setTransactions, month, cards }) {
           <div className="tx-list">
             {mtx.map((t) => {
               const reb = rebateOf(t, cards);
+              if (editId === t.id) {
+                return (
+                  <div key={t.id} className="tx-edit">
+                    <div className="form-grid">
+                      <Field label="日期"><input type="date" value={draft.date} onChange={(e) => setDraft({ ...draft, date: e.target.value })} /></Field>
+                      <Field label="類型">
+                        <select value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value, category: CATEGORIES[e.target.value][0], cardId: e.target.value === "income" ? "" : draft.cardId })}>
+                          <option value="expense">支出</option><option value="income">收入</option>
+                        </select>
+                      </Field>
+                      <Field label="分類">
+                        <select value={draft.category} onChange={(e) => setDraft({ ...draft, category: e.target.value })}>
+                          {CATEGORIES[draft.type].map((c) => <option key={c}>{c}</option>)}
+                        </select>
+                      </Field>
+                      <Field label="金額"><input type="number" inputMode="decimal" value={draft.amount} onChange={(e) => setDraft({ ...draft, amount: e.target.value })} /></Field>
+                      {draft.type === "expense" && (
+                        <Field label="支付卡片">
+                          <select value={draft.cardId || ""} onChange={(e) => setDraft({ ...draft, cardId: e.target.value })}>
+                            <option value="">現金／未指定</option>
+                            {cards.map((c) => <option key={c.id} value={c.id}>{c.name}（{c.rate}%）</option>)}
+                          </select>
+                        </Field>
+                      )}
+                      <Field label="備註"><input value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} placeholder="選填" /></Field>
+                    </div>
+                    <div className="edit-actions">
+                      <button className="teal-btn full" onClick={saveEdit}><Check size={16} /> 儲存</button>
+                      <button className="ghost-btn full" onClick={cancelEdit}><X size={16} /> 取消</button>
+                    </div>
+                  </div>
+                );
+              }
               return (
                 <div key={t.id} className="tx-row">
                   <div className="tx-main">
+                    <span className="mono tx-fulldate">{t.date}</span>
                     <span className={"chip " + t.type}>{t.category}</span>
                     <span className="tx-note">
                       {t.cardId && <span className="card-tag"><CreditCard size={11} />{cardName(t.cardId, cards)}</span>}
@@ -337,6 +381,7 @@ function Transactions({ transactions, setTransactions, month, cards }) {
                       <span className={"mono tx-amt " + t.type}>{t.type === "income" ? "+" : "−"}{fmt(t.amount)}</span>
                       {reb > 0 && <span className="mono tx-reb">回饋 {fmt(reb)}</span>}
                     </span>
+                    <button className="icon-btn" onClick={() => startEdit(t)}><Pencil size={15} /></button>
                     <button className="icon-btn" onClick={() => remove(t.id)}><Trash2 size={16} /></button>
                   </div>
                 </div>

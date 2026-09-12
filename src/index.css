@@ -215,3 +215,9 @@ input, select { font-family: inherit; font-size: 16px; } /* 16px 避免 iOS 自�
 .restore-msg { margin-top: 12px; padding: 10px 12px; border-radius: 8px; font-size: 13px; display: flex; align-items: center; gap: 6px; }
 .restore-msg.ok { background: #E4EEEA; color: #2C6E7F; }
 .restore-msg.err { background: #FBEEE8; color: #9B3E28; }
+
+/* 明細完整日期 + 行內編輯 */
+.tx-fulldate { color: #A5AEA6; font-size: 12px; flex-shrink: 0; }
+.tx-edit { padding: 14px 18px; border-top: 1px solid #F0EDE5; background: #FAF9F6; }
+.tx-edit .form-grid { margin-bottom: 10px; }
+.edit-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
