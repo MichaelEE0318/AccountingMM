@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
-  LineChart, Line, PieChart, Pie, Cell,
+  LineChart, Line, ComposedChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
 import {
@@ -140,8 +140,8 @@ function Dashboard({ transactions, month, budgets, cards }) {
       const d = +t.date.slice(8, 10) - 1;
       if (d >= 0 && d < days) daily[d][t.type] += t.amount;
     });
-    let cum = 0;
-    return daily.map((r) => { cum += r.income - r.expense; return { ...r, balance: cum }; });
+    let cum = 0, cumExp = 0;
+    return daily.map((r) => { cum += r.income - r.expense; cumExp += r.expense; return { ...r, balance: cum, cumExpense: cumExp }; });
   }, [mtx, month]);
 
   const trend = range === "year" ? yearTrend : monthTrend;
@@ -183,24 +183,32 @@ function Dashboard({ transactions, month, budgets, cards }) {
             <button className={range === "year" ? "on" : ""} onClick={() => setRange("year")}>年</button>
           </div>
         }>{range === "year" ? "收支趨勢（近 12 個月）" : `當月每日走勢（${month}）`}</SectionTitle>
-        {trend.length === 0 ? <Empty text="尚無資料，先到「收支」新增一筆" /> : (
+        {trend.length === 0 ? <Empty text="尚無資料，先到「收支」新增一筆" /> : range === "year" ? (
           <ResponsiveContainer width="100%" height={240}>
             <LineChart data={trend} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#EDE9E0" />
-              <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#7A857B" }} interval={range === "month" ? 3 : 0} />
+              <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#7A857B" }} interval={0} />
               <YAxis tick={{ fontSize: 10, fill: "#7A857B" }} tickFormatter={(v) => (v / 1000) + "k"} />
-              <Tooltip formatter={(v) => fmt(v)} labelFormatter={(l) => range === "month" ? `${month}-${l}` : l} />
+              <Tooltip formatter={(v) => fmt(v)} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
-              {range === "year" ? (
-                <>
-                  <Line type="monotone" dataKey="income" name="收入" stroke="#2C6E7F" strokeWidth={2} dot={false} />
-                  <Line type="monotone" dataKey="expense" name="支出" stroke="#B5533E" strokeWidth={2} dot={false} />
-                  <Line type="monotone" dataKey="balance" name="結餘" stroke="#5A7D4E" strokeWidth={2} strokeDasharray="4 3" dot={false} />
-                </>
-              ) : (
-                <Line type="monotone" dataKey="balance" name="累積結餘" stroke="#5A7D4E" strokeWidth={2} dot={false} />
-              )}
+              <Line type="monotone" dataKey="income" name="收入" stroke="#2C6E7F" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="expense" name="支出" stroke="#B5533E" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="balance" name="結餘" stroke="#5A7D4E" strokeWidth={2} strokeDasharray="4 3" dot={false} />
             </LineChart>
+          </ResponsiveContainer>
+        ) : (
+          <ResponsiveContainer width="100%" height={240}>
+            <ComposedChart data={trend} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#EDE9E0" />
+              <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#7A857B" }} interval={3} />
+              <YAxis yAxisId="left" tick={{ fontSize: 10, fill: "#7A857B" }} tickFormatter={(v) => (v / 1000) + "k"} />
+              <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: "#B5533E" }} tickFormatter={(v) => (v / 1000) + "k"} />
+              <Tooltip formatter={(v) => fmt(v)} labelFormatter={(l) => `${month}-${l}`} />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              <Bar yAxisId="right" dataKey="expense" name="當日支出" fill="#E0A458" radius={[2, 2, 0, 0]} maxBarSize={14} />
+              <Line yAxisId="left" type="monotone" dataKey="cumExpense" name="累積支出" stroke="#B5533E" strokeWidth={2} dot={false} />
+              <Line yAxisId="left" type="monotone" dataKey="balance" name="累積結餘" stroke="#5A7D4E" strokeWidth={2} dot={false} />
+            </ComposedChart>
           </ResponsiveContainer>
         )}
       </Card>
