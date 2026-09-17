@@ -221,3 +221,47 @@ input, select { font-family: inherit; font-size: 16px; } /* 16px 避免 iOS 自�
 .tx-edit { padding: 14px 18px; border-top: 1px solid #F0EDE5; background: #FAF9F6; }
 .tx-edit .form-grid { margin-bottom: 10px; }
 .edit-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+/* ===== 登入畫面（毛玻璃 + 圖表背景）===== */
+.boot { min-height: 100vh; display: flex; align-items: center; justify-content: center; color: #9FB4B8; background: #16262B; font-family: 'Noto Sans TC', system-ui, sans-serif; }
+.login-wrap { position: relative; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; overflow: hidden;
+  background: linear-gradient(150deg, #1B3138 0%, #16262B 45%, #12333A 100%); }
+
+/* 背景層 */
+.login-bg { position: absolute; inset: 0; z-index: 0; }
+.bg-svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.glow { position: absolute; border-radius: 50%; filter: blur(70px); opacity: 0.5; }
+.glow-1 { width: 320px; height: 320px; background: #E0A458; top: -80px; right: -60px; opacity: 0.28; }
+.glow-2 { width: 360px; height: 360px; background: #2C6E7F; bottom: -100px; left: -80px; opacity: 0.35; }
+
+/* 毛玻璃卡片 */
+.login-card.glass { position: relative; z-index: 1; width: 100%; max-width: 360px; text-align: center;
+  padding: 36px 26px 30px; border-radius: 22px;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.18);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  box-shadow: 0 20px 50px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.15); }
+.login-logo { width: 60px; height: 60px; margin: 0 auto 14px; border-radius: 16px; display: flex; align-items: center; justify-content: center;
+  background: rgba(224,164,88,0.15); border: 1px solid rgba(224,164,88,0.35); }
+.login-card.glass h1 { font-size: 21px; color: #fff; margin-bottom: 4px; letter-spacing: 0.5px; }
+.login-sub { color: rgba(255,255,255,0.6); font-size: 13px; margin-bottom: 22px; }
+
+/* 功能亮點 */
+.feat-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 24px; }
+.feat { display: flex; align-items: center; gap: 7px; padding: 9px 11px; border-radius: 10px; font-size: 13px; color: rgba(255,255,255,0.85);
+  background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); }
+.feat svg { color: #E0A458; flex-shrink: 0; }
+
+.btn-google { width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+  background: #fff; color: #2A2E30; border: none; border-radius: 12px; padding: 13px; font-size: 15px; font-weight: 500;
+  font-family: inherit; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,0.2); transition: transform .12s, box-shadow .12s; }
+.btn-google:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(0,0,0,0.28); }
+.btn-google:active { transform: translateY(0); }
+.login-err { background: rgba(181,83,62,0.22); color: #F1C0B3; border: 1px solid rgba(181,83,62,0.4); padding: 10px; border-radius: 8px; font-size: 13px; margin-top: 14px; }
+.login-hint { font-size: 12px; color: rgba(255,255,255,0.5); margin-top: 18px; line-height: 1.6; }
+
+/* 頂部登出 */
+.top-right { display: flex; align-items: center; gap: 8px; }
+.logout-btn { background: #1A2C31; color: #fff; border: 1px solid #3A555C; border-radius: 8px; padding: 4px; font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; min-width: 34px; height: 34px; overflow: hidden; }
+.logout-btn img { width: 30px; height: 30px; border-radius: 6px; display: block; }
