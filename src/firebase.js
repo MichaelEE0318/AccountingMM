@@ -6,12 +6,12 @@ import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChang
 import { getFirestore, doc, getDoc, setDoc } from "firebase/firestore";
 
 const firebaseConfig = {
-  apiKey: "貼上你的_API_KEY",
-  authDomain: "你的專案.firebaseapp.com",
-  projectId: "你的專案ID",
-  storageBucket: "你的專案.appspot.com",
-  messagingSenderId: "貼上你的_SENDER_ID",
-  appId: "貼上你的_APP_ID",
+  apiKey: "AIzaSyAFEXS-I5XZz8FgO-0mnCqdYwliTwwcBM4",
+  authDomain: "my-demo-2ac06.firebaseapp.com",
+  projectId: "my-demo-2ac06",
+  storageBucket: "my-demo-2ac06.firebasestorage.app",
+  messagingSenderId: "886656155238",
+  appId: "1:886656155238:web:a684f300c6320015c777a7"
 };
 
 const app = initializeApp(firebaseConfig);
