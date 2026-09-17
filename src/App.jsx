@@ -228,7 +228,7 @@ function Field({ label, children }) { return <label className="field"><span>{lab
 
 // ---------- Dashboard ----------
 function Dashboard({ transactions, month, budgets, cards }) {
-  const [range, setRange] = useState("year"); // "month" | "year"
+  const [range, setRange] = useState("month"); // "month" | "year"
   const mtx = transactions.filter((t) => monthKey(t.date) === month);
   const income = mtx.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
   const expense = mtx.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
