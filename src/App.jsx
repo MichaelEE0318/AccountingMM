@@ -169,6 +169,11 @@ function LedgerApp({ user }) {
     return [...set].sort().reverse();
   }, [transactions]);
 
+  // 若目前選的月份已無資料而從清單消失，自動切回最新的可用月份，避免下拉卡住
+  useEffect(() => {
+    if (!months.includes(month)) setMonth(months[0]);
+  }, [months, month]);
+
   return (
     <div className="app">
       <header className="topbar">
