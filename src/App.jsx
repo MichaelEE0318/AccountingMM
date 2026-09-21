@@ -5,16 +5,19 @@ import {
 } from "recharts";
 import {
   Plus, Trash2, Upload, Download, Plane, Wallet, AlertTriangle,
-  TrendingUp, TrendingDown, FileText, X, Check, CreditCard, Pencil,
+  TrendingUp, TrendingDown, FileText, X, Check, CreditCard, Pencil, Globe,
 } from "lucide-react";
 import { login, logout, watchAuth, cloudLoad, cloudSave } from "./firebase";
 
 // ---------- Constants ----------
 const CATEGORIES = {
   income: ["薪資", "獎金", "報帳退款", "利息", "其他收入"],
-  expense: ["餐飲", "交通", "住宿", "設備耗材", "辦公", "通訊", "差旅", "房貸", "其他支出"],
+  expense: ["餐飲", "交通", "住宿", "設備耗材", "辦公", "通訊", "差旅", "房貸", "出國消費", "其他支出"],
 };
 const TRAVEL_TYPES = ["交通", "住宿", "餐飲", "雜支"];
+const OVERSEAS_TYPES = ["餐飲", "購物", "交通", "住宿", "雜支"];
+// 台銀常用幣別
+const CURRENCIES = ["USD", "JPY", "EUR", "CNY", "HKD", "GBP", "AUD", "KRW", "THB", "SGD", "MYR", "VND", "PHP", "IDR", "CAD", "CHF", "NZD", "ZAR", "SEK"];
 const PALETTE = ["#2C6E7F", "#E0A458", "#B5533E", "#7A9E7E", "#8C6A9E", "#5B7C99", "#C97B84", "#A0A083"];
 
 const fmt = (n) => new Intl.NumberFormat("zh-TW", { style: "currency", currency: "TWD", maximumFractionDigits: 0 }).format(n || 0);
@@ -22,6 +25,17 @@ const fmt2 = (n) => new Intl.NumberFormat("zh-TW", { style: "currency", currency
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const monthKey = (d) => (d || "").slice(0, 7);
 const todayISO = () => new Date().toISOString().slice(0, 10);
+
+// 即時匯率：抓 1 外幣 = ? TWD。免費 API，失敗時回 null 讓使用者手動填
+async function fetchRate(currency) {
+  if (currency === "TWD") return 1;
+  try {
+    const res = await fetch(`https://open.er-api.com/v6/latest/${currency}`);
+    const data = await res.json();
+    const twd = data?.rates?.TWD;
+    return typeof twd === "number" ? twd : null;
+  } catch { return null; }
+}
 
 // 回饋計算：找出該卡回饋率，回傳現金回饋（單筆四捨五入到整數）
 const rebateOf = (tx, cards) => {
@@ -33,7 +47,7 @@ const rebateOf = (tx, cards) => {
 const cardName = (id, cards) => cards.find((c) => c.id === id)?.name || "";
 
 // ---------- Storage：本機快取 + Firestore 雲端（雲端優先）----------
-const KEYS = { tx: "transactions", bd: "budgets", tr: "trips", cd: "cards" };
+const KEYS = { tx: "transactions", bd: "budgets", tr: "trips", cd: "cards", ov: "overseas" };
 const cacheKey = (uid, key) => `ledger:${uid}:${key}`;
 // 本機快取讀寫（依 uid 分開，換帳號不會混）
 function cacheLoad(uid, key, fallback) {
@@ -133,6 +147,7 @@ function LedgerApp({ user }) {
   const [budgets, setBudgets] = useState(() => cacheLoad(uid, KEYS.bd, {}));
   const [trips, setTrips] = useState(() => cacheLoad(uid, KEYS.tr, []));
   const [cards, setCards] = useState(() => cacheLoad(uid, KEYS.cd, []));
+  const [overseas, setOverseas] = useState(() => cacheLoad(uid, KEYS.ov, []));
   const [month, setMonth] = useState(monthKey(todayISO()));
   const [syncing, setSyncing] = useState(true);
   const ready = useRef(false); // 雲端載入完成前，不要把空值寫回雲端
@@ -142,15 +157,17 @@ function LedgerApp({ user }) {
     let alive = true;
     setSyncing(true);
     (async () => {
-      const [tx, bd, tr, cd] = await Promise.all([
+      const [tx, bd, tr, cd, ov] = await Promise.all([
         cloudLoad(uid, KEYS.tx, null), cloudLoad(uid, KEYS.bd, null),
         cloudLoad(uid, KEYS.tr, null), cloudLoad(uid, KEYS.cd, null),
+        cloudLoad(uid, KEYS.ov, null),
       ]);
       if (!alive) return;
       if (tx !== null) setTransactions(tx);
       if (bd !== null) setBudgets(bd);
       if (tr !== null) setTrips(tr);
       if (cd !== null) setCards(cd);
+      if (ov !== null) setOverseas(ov);
       ready.current = true;
       setSyncing(false);
     })();
@@ -162,6 +179,7 @@ function LedgerApp({ user }) {
   useEffect(() => { if (!ready.current) return; cacheSave(uid, KEYS.bd, budgets); cloudSave(uid, KEYS.bd, budgets); }, [budgets, uid]);
   useEffect(() => { if (!ready.current) return; cacheSave(uid, KEYS.tr, trips); cloudSave(uid, KEYS.tr, trips); }, [trips, uid]);
   useEffect(() => { if (!ready.current) return; cacheSave(uid, KEYS.cd, cards); cloudSave(uid, KEYS.cd, cards); }, [cards, uid]);
+  useEffect(() => { if (!ready.current) return; cacheSave(uid, KEYS.ov, overseas); cloudSave(uid, KEYS.ov, overseas); }, [overseas, uid]);
 
   const months = useMemo(() => {
     const set = new Set(transactions.map((t) => monthKey(t.date)));
@@ -200,6 +218,7 @@ function LedgerApp({ user }) {
           { id: "transactions", label: "收支", icon: FileText },
           { id: "cards", label: "信用卡", icon: CreditCard },
           { id: "travel", label: "差旅", icon: Plane },
+          { id: "overseas", label: "出國", icon: Globe },
           { id: "budget", label: "預算", icon: AlertTriangle },
           { id: "reports", label: "報表", icon: Download },
         ].map((t) => {
@@ -217,8 +236,9 @@ function LedgerApp({ user }) {
         {tab === "transactions" && <Transactions transactions={transactions} setTransactions={setTransactions} month={month} cards={cards} />}
         {tab === "cards" && <Cards cards={cards} setCards={setCards} transactions={transactions} month={month} />}
         {tab === "travel" && <Travel trips={trips} setTrips={setTrips} setTransactions={setTransactions} />}
+        {tab === "overseas" && <Overseas overseas={overseas} setOverseas={setOverseas} cards={cards} setTransactions={setTransactions} />}
         {tab === "budget" && <Budget budgets={budgets} setBudgets={setBudgets} transactions={transactions} month={month} />}
-        {tab === "reports" && <Reports transactions={transactions} trips={trips} month={month} cards={cards} budgets={budgets}
+        {tab === "reports" && <Reports transactions={transactions} trips={trips} month={month} cards={cards} budgets={budgets} overseas={overseas} setOverseas={setOverseas}
           setTransactions={setTransactions} setTrips={setTrips} setCards={setCards} setBudgets={setBudgets} />}
       </main>
     </div>
@@ -516,14 +536,14 @@ function Transactions({ transactions, setTransactions, month, cards }) {
 
 // ---------- Cards ----------
 function Cards({ cards, setCards, transactions, month }) {
-  const [form, setForm] = useState({ name: "", rate: "" });
+  const [form, setForm] = useState({ name: "", rate: "", overseasRate: "", fxFee: "1.5" });
   const add = () => {
     if (!form.name || form.rate === "") return;
-    setCards((p) => [...p, { id: uid(), name: form.name, rate: +form.rate || 0 }]);
-    setForm({ name: "", rate: "" });
+    setCards((p) => [...p, { id: uid(), name: form.name, rate: +form.rate || 0, overseasRate: +form.overseasRate || 0, fxFee: form.fxFee === "" ? 1.5 : +form.fxFee }]);
+    setForm({ name: "", rate: "", overseasRate: "", fxFee: "1.5" });
   };
   const remove = (id) => setCards((p) => p.filter((c) => c.id !== id));
-  const updateRate = (id, rate) => setCards((p) => p.map((c) => c.id === id ? { ...c, rate: +rate || 0 } : c));
+  const updateField = (id, field, val) => setCards((p) => p.map((c) => c.id === id ? { ...c, [field]: +val || 0 } : c));
 
   const mtx = transactions.filter((t) => monthKey(t.date) === month && t.type === "expense" && t.cardId);
   const perCard = cards.map((c) => {
@@ -539,7 +559,9 @@ function Cards({ cards, setCards, transactions, month }) {
         <SectionTitle>新增信用卡</SectionTitle>
         <div className="form-grid">
           <Field label="卡片名稱"><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="如：國泰 CUBE" /></Field>
-          <Field label="回饋率 %"><input type="number" inputMode="decimal" value={form.rate} onChange={(e) => setForm({ ...form, rate: e.target.value })} placeholder="1.2" /></Field>
+          <Field label="國內回饋率 %"><input type="number" inputMode="decimal" value={form.rate} onChange={(e) => setForm({ ...form, rate: e.target.value })} placeholder="1.2" /></Field>
+          <Field label="海外回饋率 %"><input type="number" inputMode="decimal" value={form.overseasRate} onChange={(e) => setForm({ ...form, overseasRate: e.target.value })} placeholder="3" /></Field>
+          <Field label="海外手續費 %"><input type="number" inputMode="decimal" value={form.fxFee} onChange={(e) => setForm({ ...form, fxFee: e.target.value })} placeholder="1.5" /></Field>
         </div>
         <button className="primary-btn full" onClick={add}><Plus size={18} /> 新增卡片</button>
       </Card>
@@ -553,9 +575,11 @@ function Cards({ cards, setCards, transactions, month }) {
                 <div className="card-info">
                   <div className="card-name"><CreditCard size={16} color="#8C6A9E" /> {c.name}</div>
                   <div className="card-detail">
-                    回饋率 <input className="rate-inline" type="number" inputMode="decimal" value={c.rate} onChange={(e) => updateRate(c.id, e.target.value)} />%
-                    ・本月 {c.count} 筆・消費 <span className="mono">{fmt(c.spent)}</span>
+                    國內 <input className="rate-inline" type="number" inputMode="decimal" value={c.rate} onChange={(e) => updateField(c.id, "rate", e.target.value)} />%
+                    ・海外 <input className="rate-inline" type="number" inputMode="decimal" value={c.overseasRate ?? 0} onChange={(e) => updateField(c.id, "overseasRate", e.target.value)} />%
+                    ・手續費 <input className="rate-inline" type="number" inputMode="decimal" value={c.fxFee ?? 1.5} onChange={(e) => updateField(c.id, "fxFee", e.target.value)} />%
                   </div>
+                  <div className="card-detail">本月 {c.count} 筆・消費 <span className="mono">{fmt(c.spent)}</span></div>
                 </div>
                 <div className="card-tail">
                   <span className="mono card-rebate">{fmt(c.rebate)}</span>
@@ -676,6 +700,182 @@ function Travel({ trips, setTrips, setTransactions }) {
   );
 }
 
+// ---------- Overseas 出國消費 ----------
+// 單筆台幣成本 = 原幣 × 匯率 ×(1 + 手續費%)，四捨五入到整數
+function twdCost(item, cards) {
+  const base = item.amount * item.rate;
+  const card = cards.find((c) => c.id === item.cardId);
+  const fee = card ? (card.fxFee ?? 1.5) : 0;
+  return Math.round(base * (1 + fee / 100));
+}
+// 單筆海外回饋 = 台幣成本 × 海外回饋率%，四捨五入
+function overseasRebate(item, cards) {
+  if (!item.cardId) return 0;
+  const card = cards.find((c) => c.id === item.cardId);
+  if (!card) return 0;
+  return Math.round(twdCost(item, cards) * (card.overseasRate || 0) / 100);
+}
+
+function Overseas({ overseas, setOverseas, cards, setTransactions }) {
+  const [form, setForm] = useState({ name: "", country: "", currency: "USD", start: todayISO(), end: todayISO(), budget: "" });
+  const [expandedId, setExpandedId] = useState(null);
+  const [item, setItem] = useState({ date: todayISO(), type: "餐飲", amount: "", note: "", cardId: "", rate: "" });
+  const [rateBusy, setRateBusy] = useState(false);
+  const [rateMsg, setRateMsg] = useState("");
+
+  const addTrip = () => {
+    if (!form.name) return;
+    const t = { id: uid(), ...form, budget: +form.budget || 0, items: [], settled: false };
+    setOverseas((p) => [t, ...p]); setExpandedId(t.id);
+    setForm({ name: "", country: "", currency: "USD", start: todayISO(), end: todayISO(), budget: "" });
+  };
+  const removeTrip = (id) => setOverseas((p) => p.filter((t) => t.id !== id));
+
+  // 抓即時匯率填進「單筆匯率」
+  const grabRate = async (currency) => {
+    setRateBusy(true); setRateMsg("");
+    const r = await fetchRate(currency);
+    setRateBusy(false);
+    if (r) { setItem((i) => ({ ...i, rate: String(r) })); setRateMsg(`1 ${currency} ≈ ${r.toFixed(3)} TWD`); }
+    else setRateMsg("抓不到匯率，請手動輸入");
+  };
+
+  const addItem = (tripId, currency) => {
+    if (!item.amount || +item.amount <= 0 || !item.rate || +item.rate <= 0) return;
+    setOverseas((p) => p.map((t) => t.id === tripId
+      ? { ...t, items: [...t.items, { id: uid(), ...item, amount: +item.amount, rate: +item.rate, currency }] } : t));
+    setItem((i) => ({ ...i, amount: "", note: "" }));
+  };
+  const removeItem = (tripId, itemId) =>
+    setOverseas((p) => p.map((t) => t.id === tripId ? { ...t, items: t.items.filter((x) => x.id !== itemId) } : t));
+
+  const settle = (trip) => {
+    const totalTWD = trip.items.reduce((s, x) => s + twdCost(x, cards), 0);
+    if (!trip.settled) {
+      if (totalTWD > 0) {
+        setTransactions((p) => [{ id: uid(), date: trip.end, type: "expense", category: "出國消費", amount: totalTWD, note: `出國：${trip.name}`, cardId: "", refOverseasId: trip.id }, ...p]);
+      }
+    } else {
+      setTransactions((p) => p.filter((t) => t.refOverseasId !== trip.id));
+    }
+    setOverseas((p) => p.map((t) => t.id === trip.id ? { ...t, settled: !t.settled } : t));
+  };
+
+  return (
+    <div className="stack">
+      <Card>
+        <SectionTitle>新增出國旅程</SectionTitle>
+        <div className="form-grid">
+          <Field label="旅程名稱"><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="如：東京五日" /></Field>
+          <Field label="國家/地區"><input value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} placeholder="選填" /></Field>
+          <Field label="幣別">
+            <select value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })}>
+              {CURRENCIES.map((c) => <option key={c}>{c}</option>)}
+            </select>
+          </Field>
+          <Field label="旅程預算 TWD"><input type="number" inputMode="decimal" value={form.budget} onChange={(e) => setForm({ ...form, budget: e.target.value })} placeholder="選填" /></Field>
+          <Field label="出發"><input type="date" value={form.start} onChange={(e) => setForm({ ...form, start: e.target.value })} /></Field>
+          <Field label="返回"><input type="date" value={form.end} onChange={(e) => setForm({ ...form, end: e.target.value })} /></Field>
+        </div>
+        <button className="primary-btn full" onClick={addTrip}><Plus size={18} /> 建立旅程</button>
+      </Card>
+
+      {overseas.length === 0 ? <Card><Empty text="尚無出國旅程" /></Card> : overseas.map((trip) => {
+        const totalTWD = trip.items.reduce((s, x) => s + twdCost(x, cards), 0);
+        const totalReb = trip.items.reduce((s, x) => s + overseasRebate(x, cards), 0);
+        const byType = OVERSEAS_TYPES.map((tp) => ({ name: tp, value: trip.items.filter((x) => x.type === tp).reduce((s, x) => s + twdCost(x, cards), 0) })).filter((x) => x.value > 0);
+        // 各卡在這趟的回饋，找出最划算
+        const cardReb = {};
+        trip.items.forEach((x) => { if (x.cardId) cardReb[x.cardId] = (cardReb[x.cardId] || 0) + overseasRebate(x, cards); });
+        const bestCard = Object.entries(cardReb).sort((a, b) => b[1] - a[1])[0];
+        const open = expandedId === trip.id;
+        const overBudget = trip.budget > 0 && totalTWD > trip.budget;
+        return (
+          <Card key={trip.id} className="flush">
+            <div className={"trip-head" + (open ? " open" : "")} onClick={() => setExpandedId(open ? null : trip.id)}>
+              <div>
+                <div className="trip-name">
+                  <Globe size={16} color="#2C6E7F" /> {trip.name}
+                  {trip.settled && <span className="chip income sm"><Check size={11} />已結算</span>}
+                </div>
+                <div className="trip-meta">{trip.country && `${trip.country}・`}{trip.currency}・{trip.start.slice(5)} ~ {trip.end.slice(5)}・{trip.items.length} 筆</div>
+              </div>
+              <div className="mono trip-total">{fmt(totalTWD)}</div>
+            </div>
+
+            {open && (
+              <div className="trip-body">
+                {/* 加一筆消費 */}
+                <div className="form-grid">
+                  <Field label="日期"><input type="date" value={item.date} onChange={(e) => setItem({ ...item, date: e.target.value })} /></Field>
+                  <Field label="類別"><select value={item.type} onChange={(e) => setItem({ ...item, type: e.target.value })}>{OVERSEAS_TYPES.map((t) => <option key={t}>{t}</option>)}</select></Field>
+                  <Field label={`原幣金額 (${trip.currency})`}><input type="number" inputMode="decimal" value={item.amount} onChange={(e) => setItem({ ...item, amount: e.target.value })} placeholder="0" /></Field>
+                  <Field label="匯率 (1→TWD)"><input type="number" inputMode="decimal" value={item.rate} onChange={(e) => setItem({ ...item, rate: e.target.value })} placeholder="手動或按抓取" /></Field>
+                  <Field label="刷卡">
+                    <select value={item.cardId} onChange={(e) => setItem({ ...item, cardId: e.target.value })}>
+                      <option value="">現金／未指定</option>
+                      {cards.map((c) => <option key={c.id} value={c.id}>{c.name}（海外{c.overseasRate ?? 0}%）</option>)}
+                    </select>
+                  </Field>
+                  <Field label="備註"><input value={item.note} onChange={(e) => setItem({ ...item, note: e.target.value })} placeholder="選填" /></Field>
+                </div>
+                <div className="ov-rate-row">
+                  <button className="ghost-btn" onClick={() => grabRate(trip.currency)} disabled={rateBusy}>{rateBusy ? "抓取中…" : `抓 ${trip.currency} 即時匯率`}</button>
+                  {rateMsg && <span className="ov-rate-msg">{rateMsg}</span>}
+                </div>
+                {item.amount > 0 && item.rate > 0 && (
+                  <div className="ov-preview">
+                    預估台幣：<span className="mono">{fmt(twdCost({ amount: +item.amount, rate: +item.rate, cardId: item.cardId }, cards))}</span>
+                    {item.cardId && <> ・回饋 <span className="mono">{fmt(overseasRebate({ amount: +item.amount, rate: +item.rate, cardId: item.cardId }, cards))}</span></>}
+                  </div>
+                )}
+                <button className="teal-btn full" onClick={() => addItem(trip.id, trip.currency)}><Plus size={16} /> 加入消費</button>
+
+                {trip.items.length > 0 && (
+                  <>
+                    <div className="item-list">
+                      {trip.items.map((x) => (
+                        <div key={x.id} className="item-row">
+                          <span className="item-left">
+                            <span className="mono item-date">{x.date.slice(5)}</span>
+                            <span className="chip neutral">{x.type}</span>
+                            <span className="item-note">{x.amount} {x.currency}{x.note ? `・${x.note}` : ""}</span>
+                          </span>
+                          <span className="item-right">
+                            <span className="mono">{fmt(twdCost(x, cards))}</span>
+                            <button className="icon-btn" onClick={() => removeItem(trip.id, x.id)}><X size={15} /></button>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    {byType.length > 0 && (
+                      <ResponsiveContainer width="100%" height={150}>
+                        <PieChart><Pie data={byType} dataKey="value" nameKey="name" outerRadius={55} isAnimationActive={false}>{byType.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}</Pie><Tooltip formatter={(v) => fmt(v)} /><Legend wrapperStyle={{ fontSize: 11 }} /></PieChart>
+                      </ResponsiveContainer>
+                    )}
+                    {/* 結算摘要 */}
+                    <div className="ov-summary">
+                      <div>總花費 <span className="mono">{fmt(totalTWD)}</span></div>
+                      <div>總回饋 <span className="mono">{fmt(totalReb)}</span></div>
+                      {bestCard && <div>最划算：{cardName(bestCard[0], cards)}（回饋 <span className="mono">{fmt(bestCard[1])}</span>）</div>}
+                      {trip.budget > 0 && <div className={overBudget ? "ov-over" : ""}>預算 {fmt(trip.budget)}{overBudget && ` ⚠ 超支 ${fmt(totalTWD - trip.budget)}`}</div>}
+                    </div>
+                  </>
+                )}
+
+                <div className="trip-actions">
+                  <button className={"full " + (trip.settled ? "ghost-btn" : "green-btn")} onClick={() => settle(trip)}><Check size={15} /> {trip.settled ? "取消結算（沖銷支出）" : "標記已結算並記入收支"}</button>
+                  <button className="danger-btn full" onClick={() => removeTrip(trip.id)}><Trash2 size={15} /> 刪除旅程</button>
+                </div>
+              </div>
+            )}
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
+
 // ---------- Budget ----------
 function Budget({ budgets, setBudgets, transactions, month }) {
   const mtx = transactions.filter((t) => monthKey(t.date) === month && t.type === "expense");
@@ -707,7 +907,7 @@ function Budget({ budgets, setBudgets, transactions, month }) {
 }
 
 // ---------- Reports ----------
-function Reports({ transactions, trips, month, cards, budgets, setTransactions, setTrips, setCards, setBudgets }) {
+function Reports({ transactions, trips, month, cards, budgets, overseas, setOverseas, setTransactions, setTrips, setCards, setBudgets }) {
   const restoreRef = useRef();
   const [restoreMsg, setRestoreMsg] = useState(null); // { type: "ok"|"err", text }
 
@@ -724,11 +924,12 @@ function Reports({ transactions, trips, month, cards, budgets, setTransactions, 
         const inTx = Array.isArray(data.transactions) ? data.transactions : [];
         const inTr = Array.isArray(data.trips) ? data.trips : [];
         const inCd = Array.isArray(data.cards) ? data.cards : [];
+        const inOv = Array.isArray(data.overseas) ? data.overseas : [];
         const inBd = (data.budgets && typeof data.budgets === "object") ? data.budgets : {};
 
         if (mode === "replace") {
-          setTransactions(inTx); setTrips(inTr); setCards(inCd); setBudgets(inBd);
-          setRestoreMsg({ type: "ok", text: `已覆蓋還原：${inTx.length} 筆收支、${inTr.length} 趟差旅、${inCd.length} 張卡` });
+          setTransactions(inTx); setTrips(inTr); setCards(inCd); setBudgets(inBd); setOverseas(inOv);
+          setRestoreMsg({ type: "ok", text: `已覆蓋還原：${inTx.length} 筆收支、${inTr.length} 趟差旅、${inOv.length} 趟出國、${inCd.length} 張卡` });
         } else {
           // 合併：以 id 去重，備份資料補進現有資料（現有優先保留）
           const mergeById = (cur, add) => {
@@ -738,8 +939,9 @@ function Reports({ transactions, trips, month, cards, budgets, setTransactions, 
           setTransactions((p) => mergeById(p, inTx));
           setTrips((p) => mergeById(p, inTr));
           setCards((p) => mergeById(p, inCd));
+          setOverseas((p) => mergeById(p, inOv));
           setBudgets((p) => ({ ...inBd, ...p })); // 現有預算優先
-          setRestoreMsg({ type: "ok", text: `已合併匯入：新增 ${inTx.length} 筆收支、${inTr.length} 趟差旅、${inCd.length} 張卡（重複 id 自動略過）` });
+          setRestoreMsg({ type: "ok", text: `已合併匯入：新增 ${inTx.length} 筆收支、${inTr.length} 趟差旅、${inOv.length} 趟出國、${inCd.length} 張卡（重複 id 自動略過）` });
         }
       } catch (err) {
         setRestoreMsg({ type: "err", text: "還原失敗：" + err.message });
@@ -783,7 +985,7 @@ function Reports({ transactions, trips, month, cards, budgets, setTransactions, 
     exportCSV(rows, `差旅報帳明細.csv`);
   };
   const backupAll = () => {
-    const data = { transactions, trips, cards, budgets, exportedAt: new Date().toISOString() };
+    const data = { transactions, trips, cards, budgets, overseas, exportedAt: new Date().toISOString() };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url; a.download = `記帳備份_${todayISO()}.json`; a.click(); URL.revokeObjectURL(url);

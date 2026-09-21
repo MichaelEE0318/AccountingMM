@@ -267,3 +267,11 @@ input, select { font-family: inherit; font-size: 16px; } /* 16px 避免 iOS 自�
 .top-right { display: flex; align-items: center; gap: 8px; }
 .logout-btn { background: #1A2C31; color: #fff; border: 1px solid #3A555C; border-radius: 8px; padding: 4px; font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; min-width: 34px; height: 34px; overflow: hidden; }
 .logout-btn img { width: 30px; height: 30px; border-radius: 6px; display: block; }
+
+/* ===== 出國消費 ===== */
+.ov-rate-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.ov-rate-msg { font-size: 12px; color: #2C6E7F; }
+.ov-preview { padding: 9px 12px; background: #EFEAF3; border-radius: 8px; font-size: 13px; color: #6E5680; margin-bottom: 10px; }
+.ov-summary { background: #FAF9F6; border: 1px solid #E5E1D8; border-radius: 10px; padding: 12px 14px; margin-top: 12px; display: grid; gap: 6px; font-size: 14px; }
+.ov-summary .mono { font-weight: 700; }
+.ov-summary .ov-over { color: #B5533E; }
