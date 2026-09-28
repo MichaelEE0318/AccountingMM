@@ -349,19 +349,13 @@ input, select { font-family: inherit; font-size: 16px; } /* 16px 避免 iOS 自�
 }
 @media (max-width: 360px) { .mr-donutwrap { grid-template-columns: minmax(0,1fr); justify-items: center; } .mr-leglist { width: 100%; } }
 
-/* 列印：只印月報，排成一張 A4 */
-@page { size: A4; margin: 8mm; }
-@media print {
-  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  html, body { background: #fff !important; }
-  .topbar, .tabbar, .no-print { display: none !important; }
-  .app { max-width: none; min-height: 0; background: #fff; }
-  .content { padding: 0; }
-  .mr-sheet { border: none; border-radius: 0; zoom: .74; }
-  .mr-cols { grid-template-columns: minmax(0,1fr) minmax(0,1fr); }
-  .mr-cols > .mr-sec:nth-child(odd) { border-right: 1px solid #E5E1D8; }
-  .mr-eq { grid-template-columns: 1fr auto 1fr auto 1fr; }
-  .mr-op.eq { display: block; }
-  .mr-term.bal { grid-column: auto; padding-top: 0; border-top: none; }
-  .mr-sec { break-inside: avoid; }
-}
+/* 產生 PDF 用：畫面外的固定寬度版面（不受手機寬度影響，一律雙欄） */
+.mr-export { position: fixed; left: -12000px; top: 0; width: 1000px; background: #fff; }
+.mr-print { border: none; border-radius: 0; }
+.mr-print .mr-cols { grid-template-columns: minmax(0,1fr) minmax(0,1fr); }
+.mr-print .mr-cols > .mr-sec:nth-child(odd) { border-right: 1px solid #E5E1D8; }
+.mr-print .mr-eq { grid-template-columns: 1fr auto 1fr auto 1fr; }
+.mr-print .mr-op.eq { display: block; }
+.mr-print .mr-term.bal { grid-column: auto; padding-top: 0; border-top: none; }
+.mr-print .mr-donutwrap { grid-template-columns: 140px minmax(0,1fr); justify-items: stretch; }
+.mr-print .mr-term .val { font-size: 26px; }
