@@ -994,19 +994,59 @@ function Reports({ transactions, trips, month, cards, budgets, overseas, setOver
 
   const pendingTravel = trips.filter((t) => !t.reimbursed).reduce((s, t) => s + t.items.reduce((a, x) => a + x.amount, 0), 0);
 
-  const reportHTML = useMemo(() => buildMonthlyReport({ transactions, cards, budgets, month }), [transactions, cards, budgets, month]);
+  const mtx = transactions.filter((t) => monthKey(t.date) === month);
+  const income = mtx.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
+  const expense = mtx.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
+  const rebate = mtx.reduce((s, t) => s + rebateOf(t, cards), 0);
+
+  // 產生一頁式月報 PDF 並下載（PDF 套件只在按下時才載入，不拖慢 App 開啟速度）
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfMsg, setPdfMsg] = useState("");
+  const downloadReport = async () => {
+    if (mtx.length === 0) { setPdfMsg(`${month} 沒有任何收支紀錄，無法產生月報。`); return; }
+    setPdfBusy(true); setPdfMsg("");
+    const host = document.createElement("div");
+    host.className = "mr-export";
+    try {
+      const [{ default: html2canvas }, { jsPDF }] = await Promise.all([import("html2canvas"), import("jspdf")]);
+      host.innerHTML = `<article class="mr-sheet mr-print">${buildMonthlyReport({ transactions, cards, budgets, month })}</article>`;
+      document.body.appendChild(host);
+      if (document.fonts && document.fonts.ready) await document.fonts.ready;
+      const canvas = await html2canvas(host.firstElementChild, { scale: 2, backgroundColor: "#ffffff", logging: false });
+      const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
+      const PW = 210, PH = 297, M = 8;
+      let w = PW - M * 2, h = canvas.height * w / canvas.width;
+      if (h > PH - M * 2) { h = PH - M * 2; w = canvas.width * h / canvas.height; } // 縮放到剛好一頁
+      pdf.addImage(canvas.toDataURL("image/jpeg", 0.92), "JPEG", (PW - w) / 2, M, w, h);
+      pdf.save(`收支月報_${month}.pdf`);
+      setPdfMsg(`已產生「收支月報_${month}.pdf」`);
+    } catch (e) {
+      setPdfMsg("產生失敗：" + (e?.message || e));
+    } finally {
+      if (host.parentNode) host.parentNode.removeChild(host);
+      setPdfBusy(false);
+    }
+  };
 
   return (
     <div className="stack">
-      <div className="mr-actions no-print">
-        <span>收支月報會依本月資料自動產生</span>
-        <button className="teal-btn" onClick={() => window.print()}><Download size={15} /> 列印／存 PDF</button>
-      </div>
-      <article className="mr-sheet" dangerouslySetInnerHTML={{ __html: reportHTML }} />
+      <Card>
+        <SectionTitle>{month} 月報摘要</SectionTitle>
+        <div className="summary-grid">
+          <Summary label="收入" value={income} />
+          <Summary label="支出" value={expense} />
+          <Summary label="結餘" value={income - expense} accent />
+          <Summary label="信用卡回饋" value={rebate} />
+          <Summary label="待報帳差旅" value={pendingTravel} warn />
+        </div>
+        <button className="primary-btn full" onClick={downloadReport} disabled={pdfBusy}>
+          <FileText size={16} /> {pdfBusy ? "月報產生中…" : `下載 ${month} 月報 PDF`}
+        </button>
+        {pdfMsg && <div className="hint" style={{ marginTop: 10 }}>{pdfMsg}</div>}
+      </Card>
 
-      <Card className="no-print">
+      <Card>
         <SectionTitle>匯出與備份</SectionTitle>
-        {pendingTravel > 0 && <div className="hint" style={{ marginTop: 0, marginBottom: 12 }}>尚有待報帳差旅 <span className="mono">{fmt(pendingTravel)}</span></div>}
         <div className="export-btns">
           <button className="teal-btn" onClick={exportTx}><Download size={15} /> 本月收支 CSV</button>
           <button className="teal-btn" onClick={exportRebate}><Download size={15} /> 回饋明細 CSV</button>
@@ -1016,7 +1056,7 @@ function Reports({ transactions, trips, month, cards, budgets, overseas, setOver
         <div className="hint" style={{ marginTop: 12 }}>資料已自動同步到雲端，完整備份是額外的保險，建議每月存一份。</div>
       </Card>
 
-      <Card className="no-print">
+      <Card>
         <SectionTitle>還原備份</SectionTitle>
         <div className="hint" style={{ marginBottom: 14 }}>讀入之前匯出的「完整備份 JSON」。合併＝把備份資料補進現有資料（重複自動略過）；覆蓋＝清空現有再用備份取代。</div>
         <input ref={restoreRef} type="file" accept=".json,application/json" style={{ display: "none" }}
