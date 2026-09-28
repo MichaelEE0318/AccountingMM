@@ -46,17 +46,17 @@ function chart6(transactions, ms, cur, rebateOf) {
   const y = (v) => t + (top - v) / (top - min) * (H - t - b);
   const gw = (W - l - r) / data.length, bw = Math.min(20, gw * 0.28);
   let g = "";
-  for (let v = min; v <= top + 1; v += step) g += `<line class="mr-gl" x1="${l}" x2="${W - r}" y1="${y(v)}" y2="${y(v)}"/><text class="mr-ax" x="${l - 6}" y="${y(v) + 4}" text-anchor="end">${Math.round(v / 1000)}k</text>`;
+  for (let v = min; v <= top + 1; v += step) g += `<line stroke="#EDE9E0" stroke-width="1" x1="${l}" x2="${W - r}" y1="${y(v)}" y2="${y(v)}"/><text fill="#8E978F" font-size="13" font-family="Roboto Mono, Menlo, monospace" x="${l - 6}" y="${y(v) + 4}" text-anchor="end">${Math.round(v / 1000)}k</text>`;
   const pts = [];
   data.forEach((d, i) => {
     const x0 = l + gw * i + gw / 2;
-    g += `<rect class="mr-inc" x="${x0 - bw - 2}" y="${y(d.inc)}" width="${bw}" height="${Math.max(0, y(0) - y(d.inc))}" rx="2"><title>${d.m} 收入 ${money(d.inc)}</title></rect>`;
-    g += `<rect class="mr-exp" x="${x0 + 2}" y="${y(d.exp)}" width="${bw}" height="${Math.max(0, y(0) - y(d.exp))}" rx="2"><title>${d.m} 支出 ${money(d.exp)}</title></rect>`;
-    g += `<text class="mr-ax${d.m === cur ? " cur" : ""}" x="${x0}" y="${H - 8}" text-anchor="middle">${+d.m.slice(5)}月</text>`;
+    g += `<rect fill="#2C6E7F" x="${x0 - bw - 2}" y="${y(d.inc)}" width="${bw}" height="${Math.max(0, y(0) - y(d.inc))}" rx="2"><title>${d.m} 收入 ${money(d.inc)}</title></rect>`;
+    g += `<rect fill="#B5533E" x="${x0 + 2}" y="${y(d.exp)}" width="${bw}" height="${Math.max(0, y(0) - y(d.exp))}" rx="2"><title>${d.m} 支出 ${money(d.exp)}</title></rect>`;
+    g += `<text ${d.m === cur ? 'fill="#2A2E30" font-weight="700"' : 'fill="#8E978F"'} font-size="13" font-family="Roboto Mono, Menlo, monospace" x="${x0}" y="${H - 8}" text-anchor="middle">${+d.m.slice(5)}月</text>`;
     pts.push([x0, y(d.bal)]);
   });
-  g += `<polyline class="mr-lnbal" points="${pts.map((p) => p.join(",")).join(" ")}"/>`;
-  pts.forEach((p, i) => (g += `<circle class="mr-ptbal" cx="${p[0]}" cy="${p[1]}" r="3.5"><title>${data[i].m} 結餘 ${money(data[i].bal)}</title></circle>`));
+  g += `<polyline fill="none" stroke="#5A7D4E" stroke-width="2.2" points="${pts.map((p) => p.join(",")).join(" ")}"/>`;
+  pts.forEach((p, i) => (g += `<circle fill="#FFFFFF" stroke="#5A7D4E" stroke-width="2" cx="${p[0]}" cy="${p[1]}" r="3.5"><title>${data[i].m} 結餘 ${money(data[i].bal)}</title></circle>`));
   return `<svg class="mr-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="近六個月收支">${g}</svg>
   <div class="mr-legend"><span><i style="background:#2C6E7F"></i>收入</span><span><i style="background:#B5533E"></i>支出</span><span><i style="background:#5A7D4E"></i>結餘</span></div>`;
 }
@@ -72,7 +72,7 @@ function donut(s) {
     acc += len;
   });
   const leg = top.map(([k, v], i) => `<div class="mr-legrow"><span><i style="background:${PAL[i % PAL.length]}"></i>${esc(k)}<em>${(v / s.expense * 100).toFixed(0)}%</em></span><span class="mr-num">${money(v)}</span></div>`).join("");
-  return `<div class="mr-donutwrap"><svg class="mr-donut" viewBox="0 0 150 150" role="img" aria-label="支出結構">${arcs}<text class="mr-dnl" x="75" y="70" text-anchor="middle">總支出</text><text class="mr-dnv" x="75" y="89" text-anchor="middle">${money(s.expense)}</text></svg><div class="mr-leglist">${leg}</div></div>`;
+  return `<div class="mr-donutwrap"><svg class="mr-donut" viewBox="0 0 150 150" role="img" aria-label="支出結構">${arcs}<text fill="#6F7A72" font-size="11" x="75" y="70" text-anchor="middle">總支出</text><text fill="#2A2E30" font-size="14" font-weight="700" font-family="Roboto Mono, Menlo, monospace" x="75" y="89" text-anchor="middle">${money(s.expense)}</text></svg><div class="mr-leglist">${leg}</div></div>`;
 }
 
 function daily(s) {
@@ -82,12 +82,12 @@ function daily(s) {
   const mx = Math.max(...arr, 1), step = niceStep(mx), top = Math.ceil(mx / step) * step;
   const y = (v) => t + (top - v) / top * (H - t - b), bw = (W - l - r) / days, maxI = arr.indexOf(mx), avg = s.expense / days;
   let g = "";
-  for (let v = 0; v <= top + 1; v += step) g += `<line class="mr-gl" x1="${l}" x2="${W - r}" y1="${y(v)}" y2="${y(v)}"/><text class="mr-ax" x="${l - 6}" y="${y(v) + 4}" text-anchor="end">${v >= 1000 ? Math.round(v / 1000) + "k" : v}</text>`;
+  for (let v = 0; v <= top + 1; v += step) g += `<line stroke="#EDE9E0" stroke-width="1" x1="${l}" x2="${W - r}" y1="${y(v)}" y2="${y(v)}"/><text fill="#8E978F" font-size="13" font-family="Roboto Mono, Menlo, monospace" x="${l - 6}" y="${y(v) + 4}" text-anchor="end">${v >= 1000 ? Math.round(v / 1000) + "k" : v}</text>`;
   arr.forEach((v, i) => {
-    if (v > 0) g += `<rect class="${i === maxI ? "mr-max" : "mr-soft"}" x="${l + bw * i + bw * 0.15}" y="${y(v)}" width="${bw * 0.7}" height="${y(0) - y(v)}" rx="1.5"><title>${i + 1} 日 ${money(v)}</title></rect>`;
-    if ([0, 4, 9, 14, 19, 24, 29].includes(i)) g += `<text class="mr-ax" x="${l + bw * i + bw / 2}" y="${H - 6}" text-anchor="middle">${i + 1}</text>`;
+    if (v > 0) g += `<rect fill="${i === maxI ? "#E0A458" : "#E4B3A6"}" x="${l + bw * i + bw * 0.15}" y="${y(v)}" width="${bw * 0.7}" height="${y(0) - y(v)}" rx="1.5"><title>${i + 1} 日 ${money(v)}</title></rect>`;
+    if ([0, 4, 9, 14, 19, 24, 29].includes(i)) g += `<text fill="#8E978F" font-size="13" font-family="Roboto Mono, Menlo, monospace" x="${l + bw * i + bw / 2}" y="${H - 6}" text-anchor="middle">${i + 1}</text>`;
   });
-  g += `<line class="mr-lnavg" x1="${l}" x2="${W - r}" y1="${y(avg)}" y2="${y(avg)}"/>`;
+  g += `<line stroke="#6F7A72" stroke-width="1" stroke-dasharray="4 3" x1="${l}" x2="${W - r}" y1="${y(avg)}" y2="${y(avg)}"/>`;
   return `<svg class="mr-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="每日支出">${g}</svg>
   <div class="mr-legend"><span><i style="background:#E0A458"></i>單日最高 ${maxI + 1} 日 ${money(mx)}</span><span><i style="background:#6F7A72;height:2px"></i>日均 ${money(avg)}</span></div>`;
 }
