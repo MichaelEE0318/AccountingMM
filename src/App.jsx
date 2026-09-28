@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
-  LineChart, Line, ComposedChart, Bar, PieChart, Pie, Cell,
+  Line, ComposedChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
 import {
-  Plus, Trash2, Upload, Download, Plane, Wallet, AlertTriangle,
-  TrendingUp, TrendingDown, FileText, X, Check, CreditCard, Pencil, Globe,
+  Plus, Trash2, Upload, Download, Plane, Wallet, AlertTriangle, X, Check, CreditCard, Globe,
+  Utensils, Bus, BedDouble, Wrench, Briefcase, Smartphone, Home as HomeIcon, ShoppingBag,
+  Banknote, Gift, RotateCcw, Percent, Coins, List, BarChart3, PieChart as PieChartIcon,
+  MoreHorizontal, ChevronDown, ChevronRight, ChevronLeft, Delete, LogOut, User,
 } from "lucide-react";
 import { login, logout, watchAuth, cloudLoad, cloudSave } from "./firebase";
 import { buildMonthlyReport } from "./monthlyReport";
@@ -25,7 +27,8 @@ const fmt = (n) => new Intl.NumberFormat("zh-TW", { style: "currency", currency:
 const fmt2 = (n) => new Intl.NumberFormat("zh-TW", { style: "currency", currency: "TWD", minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(n || 0);
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const monthKey = (d) => (d || "").slice(0, 7);
-const todayISO = () => new Date().toISOString().slice(0, 10);
+// 以手機本地時區取今天日期（避免台灣清晨被算成前一天）
+const todayISO = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
 
 // 即時匯率：抓 1 外幣 = ? TWD。免費 API，失敗時回 null 讓使用者手動填
 async function fetchRate(currency) {
@@ -46,6 +49,30 @@ const rebateOf = (tx, cards) => {
   return Math.round(tx.amount * (card.rate || 0) / 100);
 };
 const cardName = (id, cards) => cards.find((c) => c.id === id)?.name || "";
+
+// 分類的圖示與配色（深色主題）
+const CAT_STYLE = {
+  "餐飲": { Icon: Utensils, bg: "#1C2E26", fg: "#8FD3AE" },
+  "交通": { Icon: Bus, bg: "#1F2536", fg: "#9DB1E8" },
+  "住宿": { Icon: BedDouble, bg: "#2B2418", fg: "#E6BE82" },
+  "設備耗材": { Icon: Wrench, bg: "#22272B", fg: "#AFC0CC" },
+  "辦公": { Icon: Briefcase, bg: "#28251E", fg: "#D4C7A8" },
+  "通訊": { Icon: Smartphone, bg: "#2A1F27", fg: "#E0A3C7" },
+  "差旅": { Icon: Plane, bg: "#2C1F18", fg: "#F0A77E" },
+  "房貸": { Icon: HomeIcon, bg: "#1E1D19", fg: "#B8B1A4" },
+  "出國消費": { Icon: Globe, bg: "#17292C", fg: "#7FCAD4" },
+  "其他支出": { Icon: ShoppingBag, bg: "#272A1C", fg: "#CFD68A" },
+  "薪資": { Icon: Banknote, bg: "#16262E", fg: "#8FD0DE" },
+  "獎金": { Icon: Gift, bg: "#2B2418", fg: "#E6BE82" },
+  "報帳退款": { Icon: RotateCcw, bg: "#17292C", fg: "#7FCAD4" },
+  "利息": { Icon: Percent, bg: "#1C2E26", fg: "#8FD3AE" },
+  "其他收入": { Icon: Coins, bg: "#1E1D19", fg: "#B8B1A4" },
+};
+const catStyle = (c) => CAT_STYLE[c] || { Icon: Coins, bg: "#1E1D19", fg: "#B8B1A4" };
+const num = (n) => Math.round(n || 0).toLocaleString("en-US");
+const WEEK = ["日", "一", "二", "三", "四", "五", "六"];
+const prevMonthKey = (m) => { let [y, mm] = m.split("-").map(Number); mm--; if (mm === 0) { mm = 12; y--; } return y + "-" + String(mm).padStart(2, "0"); };
+
 
 // ---------- Storage：本機快取 + Firestore 雲端（雲端優先）----------
 const KEYS = { tx: "transactions", bd: "budgets", tr: "trips", cd: "cards", ov: "overseas" };
@@ -76,73 +103,53 @@ export default function App() {
 
 // ---------- 登入畫面 ----------
 function LoginScreen({ onLogin, err }) {
+  const preview = ["餐飲", "交通", "出國消費", "通訊"];
   return (
-    <div className="login-wrap">
-      {/* 背景視覺：漸層 + 抽象圖表/能源意象 */}
-      <div className="login-bg" aria-hidden="true">
-        <svg className="bg-svg" viewBox="0 0 400 800" preserveAspectRatio="xMidYMid slice">
-          <defs>
-            <linearGradient id="area1" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#E0A458" stopOpacity="0.35" />
-              <stop offset="100%" stopColor="#E0A458" stopOpacity="0" />
-            </linearGradient>
-            <linearGradient id="area2" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#5A9E8A" stopOpacity="0.30" />
-              <stop offset="100%" stopColor="#5A9E8A" stopOpacity="0" />
-            </linearGradient>
-          </defs>
-          {/* 網格 */}
-          <g stroke="#ffffff" strokeOpacity="0.05" strokeWidth="1">
-            {Array.from({ length: 9 }).map((_, i) => <line key={"h" + i} x1="0" y1={i * 100} x2="400" y2={i * 100} />)}
-            {Array.from({ length: 5 }).map((_, i) => <line key={"v" + i} x1={i * 100} y1="0" x2={i * 100} y2="800" />)}
-          </g>
-          {/* 面積折線圖意象 1 */}
-          <path d="M0,560 L50,540 L100,570 L150,500 L200,520 L250,440 L300,470 L350,400 L400,430 L400,800 L0,800 Z" fill="url(#area2)" />
-          <path d="M0,560 L50,540 L100,570 L150,500 L200,520 L250,440 L300,470 L350,400 L400,430" fill="none" stroke="#5A9E8A" strokeOpacity="0.5" strokeWidth="2" />
-          {/* 面積折線圖意象 2 */}
-          <path d="M0,650 L50,640 L100,610 L150,640 L200,590 L250,610 L300,560 L350,585 L400,540 L400,800 L0,800 Z" fill="url(#area1)" />
-          <path d="M0,650 L50,640 L100,610 L150,640 L200,590 L250,610 L300,560 L350,585 L400,540" fill="none" stroke="#E0A458" strokeOpacity="0.6" strokeWidth="2" />
-          {/* 資料點光暈 */}
-          {[[150,500],[250,440],[350,400],[300,560],[400,540]].map(([x,y],i)=>(
-            <circle key={i} cx={x} cy={y} r="4" fill="#fff" fillOpacity="0.7" />
-          ))}
-          {/* 長條意象 */}
-          <g fill="#ffffff" fillOpacity="0.06">
-            {[120,180,90,220,150,200,110].map((h,i)=>(<rect key={i} x={20+i*55} y={720-h} width="26" height={h} rx="4" />))}
-          </g>
-        </svg>
-        <div className="glow glow-1" />
-        <div className="glow glow-2" />
-      </div>
-
-      {/* 前景：毛玻璃卡片 */}
-      <div className="login-card glass">
-        <div className="login-logo"><Wallet size={30} color="#E0A458" /></div>
-        <h1>工程財務記帳台</h1>
-        <p className="login-sub">收支・差旅・預算・回饋</p>
-
-        <div className="feat-row">
-          <div className="feat"><TrendingUp size={16} /><span>收支趨勢</span></div>
-          <div className="feat"><CreditCard size={16} /><span>回饋試算</span></div>
-          <div className="feat"><Plane size={16} /><span>差旅報帳</span></div>
-          <div className="feat"><AlertTriangle size={16} /><span>預算預警</span></div>
+    <div className="login">
+      <div className="login-beam" aria-hidden="true" />
+      <div className="login-line" aria-hidden="true" />
+      <div className="login-preview" aria-hidden="true">
+        <div className="lp-stack">
+          {preview.map((c) => {
+            const s = catStyle(c);
+            return (
+              <div key={c} className="lp-tile" style={{ background: s.bg, color: "#F2EEE6" }}>
+                <span className="tile-ico" style={{ color: s.fg }}><s.Icon size={17} /></span>{c}
+              </div>
+            );
+          })}
         </div>
-
+      </div>
+      <div className="login-brand">
+        <div className="login-logo"><Wallet size={26} color="#E0A458" /></div>
+        <h1>工程財務記帳台</h1>
+        <p>點分類、打金額、記下。<br />收支、回饋、差旅代墊一次看清。</p>
+      </div>
+      <div className="login-actions">
         <button className="btn-google" onClick={onLogin}>
-          <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
-        使用 Google 登入
+          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+          使用 Google 登入
         </button>
         {err && <div className="login-err">{err}</div>}
-        <p className="login-hint">登入後資料存到你的雲端，手機、電腦同帳號自動同步。</p>
+        <p className="login-hint">每次登入都可以選擇帳號，資料存在你的雲端，手機和電腦自動同步。</p>
       </div>
     </div>
   );
 }
 
 // ---------- 主程式（登入後）----------
+const monthLabel = (m) => `${m.slice(0, 4)} 年 ${+m.slice(5)} 月`;
+const NAV = [
+  { id: "home", label: "記一筆", Icon: Plus },
+  { id: "ledger", label: "明細", Icon: List },
+  { id: "reports", label: "報表", Icon: BarChart3 },
+  { id: "budget", label: "預算", Icon: PieChartIcon },
+  { id: "more", label: "更多", Icon: MoreHorizontal },
+];
+
 function LedgerApp({ user }) {
   const uid = user.uid;
-  const [tab, setTab] = useState("dashboard");
+  const [tab, setTab] = useState("home");
   // 先用本機快取初始化（秒開不白畫面），再從雲端覆蓋
   const [transactions, setTransactions] = useState(() => cacheLoad(uid, KEYS.tx, []));
   const [budgets, setBudgets] = useState(() => cacheLoad(uid, KEYS.bd, {}));
@@ -151,9 +158,12 @@ function LedgerApp({ user }) {
   const [overseas, setOverseas] = useState(() => cacheLoad(uid, KEYS.ov, []));
   const [month, setMonth] = useState(monthKey(todayISO()));
   const [syncing, setSyncing] = useState(true);
+  const [quick, setQuick] = useState(null); // 記一筆面板：{ type, category }
+  const [toast, setToast] = useState("");
+  const toastTimer = useRef(null);
   const ready = useRef(false); // 雲端載入完成前，不要把空值寫回雲端
 
-  // 登入後：從雲端載入四類（雲端優先），載完才允許寫回
+  // 登入後：從雲端載入（雲端優先），載完才允許寫回
   useEffect(() => {
     let alive = true;
     setSyncing(true);
@@ -185,7 +195,7 @@ function LedgerApp({ user }) {
   const months = useMemo(() => {
     const set = new Set(transactions.map((t) => monthKey(t.date)));
     set.add(monthKey(todayISO()));
-    return [...set].sort().reverse();
+    return [...set].filter(Boolean).sort().reverse();
   }, [transactions]);
 
   // 若目前選的月份已無資料而從清單消失，自動切回最新的可用月份，避免下拉卡住
@@ -193,58 +203,106 @@ function LedgerApp({ user }) {
     if (!months.includes(month)) setMonth(months[0]);
   }, [months, month]);
 
+  const goto = (t) => { setTab(t); window.scrollTo(0, 0); };
+  const saveQuick = (tx) => {
+    setTransactions((p) => [tx, ...p]);
+    setQuick(null);
+    setMonth(monthKey(tx.date));
+    setToast(`已記下 ${tx.category} ${num(tx.amount)}`);
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(""), 2400);
+  };
+  const navActive = ["cards", "travel", "overseas"].includes(tab) ? "more" : tab;
+
   return (
     <div className="app">
-      <header className="topbar">
-        <div className="brand">
-          <Wallet size={24} color="#E0A458" />
-          <div>
-            <div className="brand-title">工程財務記帳台</div>
-            <div className="brand-sub">{syncing ? "雲端同步中…" : "收支・差旅・預算・回饋"}</div>
-          </div>
-        </div>
-        <div className="top-right">
-          <select className="month-select" value={month} onChange={(e) => setMonth(e.target.value)}>
-            {months.map((m) => <option key={m} value={m}>{m}</option>)}
+      <header className="hdr">
+        <button className="brand" onClick={() => goto("home")} aria-label="回到記一筆">
+          <Wallet size={22} color="#E0A458" /><span>記帳台</span><i className="brand-dot" />
+        </button>
+        <div className="hdr-right">
+          <span className="sync"><i className={syncing ? "busy" : ""} />{syncing ? "同步中" : "已同步"}</span>
+          <select className="month-pill" value={month} onChange={(e) => setMonth(e.target.value)} aria-label="選擇月份">
+            {months.map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}
           </select>
-          <button className="logout-btn" onClick={logout} title="登出">
-            {user.photoURL ? <img src={user.photoURL} alt="" /> : "登出"}
+          <button className="avatar" onClick={() => goto("more")} aria-label="帳號與更多">
+            {user.photoURL ? <img src={user.photoURL} alt="" referrerPolicy="no-referrer" /> : <User size={18} />}
           </button>
         </div>
       </header>
 
-      <nav className="tabbar">
-        {[
-          { id: "dashboard", label: "儀表板", icon: TrendingUp },
-          { id: "transactions", label: "收支", icon: FileText },
-          { id: "cards", label: "信用卡", icon: CreditCard },
-          { id: "travel", label: "差旅", icon: Plane },
-          { id: "overseas", label: "出國", icon: Globe },
-          { id: "budget", label: "預算", icon: AlertTriangle },
-          { id: "reports", label: "報表", icon: Download },
-        ].map((t) => {
-          const Icon = t.icon; const active = tab === t.id;
-          return (
-            <button key={t.id} className={"tab-btn" + (active ? " active" : "")} onClick={() => setTab(t.id)}>
-              <Icon size={18} /><span>{t.label}</span>
-            </button>
-          );
-        })}
-      </nav>
-
       <main className="content">
-        {tab === "dashboard" && <Dashboard transactions={transactions} month={month} budgets={budgets} cards={cards} />}
-        {tab === "transactions" && <Transactions transactions={transactions} setTransactions={setTransactions} month={month} cards={cards} />}
-        {tab === "cards" && <Cards cards={cards} setCards={setCards} transactions={transactions} month={month} />}
-        {tab === "travel" && <Travel trips={trips} setTrips={setTrips} setTransactions={setTransactions} />}
-        {tab === "overseas" && <Overseas overseas={overseas} setOverseas={setOverseas} cards={cards} setTransactions={setTransactions} />}
-        {tab === "budget" && <Budget budgets={budgets} setBudgets={setBudgets} transactions={transactions} month={month} />}
+        {tab === "home" && <HomeScreen transactions={transactions} budgets={budgets} cards={cards} trips={trips} month={month} onAdd={setQuick} goto={goto} />}
+        {tab === "ledger" && <Ledger transactions={transactions} setTransactions={setTransactions} month={month} cards={cards} />}
         {tab === "reports" && <Reports transactions={transactions} trips={trips} month={month} cards={cards} budgets={budgets} overseas={overseas} setOverseas={setOverseas}
           setTransactions={setTransactions} setTrips={setTrips} setCards={setCards} setBudgets={setBudgets} />}
+        {tab === "budget" && <Budget budgets={budgets} setBudgets={setBudgets} transactions={transactions} month={month} />}
+        {tab === "more" && <More user={user} cards={cards} trips={trips} overseas={overseas} transactions={transactions} month={month} goto={goto} />}
+        {tab === "cards" && <div className="stack"><SubHead title="信用卡" goto={goto} /><Cards cards={cards} setCards={setCards} transactions={transactions} month={month} /></div>}
+        {tab === "travel" && <div className="stack"><SubHead title="差旅代墊" goto={goto} /><Travel trips={trips} setTrips={setTrips} setTransactions={setTransactions} /></div>}
+        {tab === "overseas" && <div className="stack"><SubHead title="出國消費" goto={goto} /><Overseas overseas={overseas} setOverseas={setOverseas} cards={cards} setTransactions={setTransactions} /></div>}
       </main>
+
+      <nav className="bnav" aria-label="主選單">
+        {NAV.map(({ id, label, Icon }) => (
+          <button key={id} className={"bnav-item" + (navActive === id ? " on" : "")} aria-current={navActive === id ? "page" : undefined}
+            onClick={() => (id === "home" && tab === "home" ? setQuick({ type: "expense", category: "餐飲" }) : goto(id))}>
+            <Icon size={20} /><span>{label}</span>
+          </button>
+        ))}
+      </nav>
+
+      {quick && <QuickAdd init={quick} cards={cards} budgets={budgets} transactions={transactions} onSave={saveQuick} onClose={() => setQuick(null)} />}
+      {toast && <div className="toast" role="status">{toast}</div>}
     </div>
   );
 }
+
+// ---------- 更多 ----------
+function More({ user, cards, trips, overseas, transactions, month, goto }) {
+  const mtx = transactions.filter((t) => monthKey(t.date) === month);
+  const rebate = mtx.reduce((s, t) => s + rebateOf(t, cards), 0);
+  const pend = trips.filter((t) => !t.reimbursed && t.items.length > 0);
+  const pendAmt = pend.reduce((s, t) => s + t.items.reduce((a, x) => a + x.amount, 0), 0);
+  const items = [
+    { id: "cards", Icon: CreditCard, color: "#B99AD6", title: "信用卡", sub: cards.length ? `${cards.length} 張卡，本月回饋 ${num(rebate)}` : "新增卡片與回饋率" },
+    { id: "travel", Icon: Plane, color: "#E0A458", title: "差旅代墊", sub: pend.length ? `${pend.length} 趟待報帳，共 ${num(pendAmt)}` : `${trips.length} 趟行程` },
+    { id: "overseas", Icon: Globe, color: "#7FCAD4", title: "出國消費", sub: overseas.length ? `${overseas.length} 趟旅程` : "建立旅程，即時匯率換算" },
+  ];
+  return (
+    <div className="stack">
+      <div className="page-head"><h1>更多</h1></div>
+      <div className="list-card">
+        {items.map((it) => (
+          <button key={it.id} className="list-row" onClick={() => goto(it.id)}>
+            <span className="list-ico" style={{ color: it.color, background: it.color + "24" }}><it.Icon size={19} /></span>
+            <span className="list-txt"><b>{it.title}</b><small>{it.sub}</small></span>
+            <ChevronRight size={18} className="list-chev" />
+          </button>
+        ))}
+      </div>
+      <div className="list-card">
+        <div className="acct">
+          {user.photoURL ? <img src={user.photoURL} alt="" referrerPolicy="no-referrer" /> : <span className="list-ico" style={{ color: "#E0A458", background: "#E0A45824" }}><User size={18} /></span>}
+          <span className="list-txt"><b>{user.displayName || "已登入"}</b><small>{user.email}</small></span>
+        </div>
+        <button className="list-row" onClick={logout}>
+          <span className="list-ico" style={{ color: "#F2A48E", background: "#F2A48E24" }}><LogOut size={18} /></span>
+          <span className="list-txt"><b>登出</b><small>下次登入可以重新選擇帳號</small></span>
+        </button>
+      </div>
+    </div>
+  );
+}
+function SubHead({ title, goto }) {
+  return (
+    <div className="sub-head">
+      <button className="back-btn" onClick={() => goto("more")}><ChevronLeft size={18} />更多</button>
+      <h1>{title}</h1>
+    </div>
+  );
+}
+
 
 // ---------- Shared ----------
 function Card({ children, className = "", style }) { return <div className={"card " + className} style={style}>{children}</div>; }
@@ -252,162 +310,204 @@ function SectionTitle({ children, right }) { return <div className="section-titl
 function Empty({ text }) { return <div className="empty">{text}</div>; }
 function Field({ label, children }) { return <label className="field"><span>{label}</span>{children}</label>; }
 
-// ---------- Dashboard ----------
-function Dashboard({ transactions, month, budgets, cards }) {
-  const [range, setRange] = useState("month"); // "month" | "year"
-  const mtx = transactions.filter((t) => monthKey(t.date) === month);
+// ---------- 記一筆（首頁）----------
+function HomeScreen({ transactions, budgets, cards, trips, month, onAdd, goto }) {
+  const mtx = useMemo(() => transactions.filter((t) => monthKey(t.date) === month), [transactions, month]);
+  const spentBy = {};
+  mtx.forEach((t) => { if (t.type === "expense") spentBy[t.category] = (spentBy[t.category] || 0) + t.amount; });
   const income = mtx.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
   const expense = mtx.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
-  const balance = income - expense;
-  const monthRebate = mtx.reduce((s, t) => s + rebateOf(t, cards), 0);
-
-  // 年檢視：近 12 個月
-  const yearTrend = useMemo(() => {
-    const map = {};
-    transactions.forEach((t) => {
-      const k = monthKey(t.date); if (!k) return;
-      map[k] = map[k] || { label: k, income: 0, expense: 0 };
-      map[k][t.type] += t.amount;
-    });
-    return Object.values(map).sort((a, b) => a.label.localeCompare(b.label)).slice(-12)
-      .map((r) => ({ ...r, balance: r.income - r.expense }));
-  }, [transactions]);
-
-  // 月檢視：當月每日累積結餘
-  const monthTrend = useMemo(() => {
-    const days = new Date(+month.slice(0, 4), +month.slice(5, 7), 0).getDate();
-    const daily = Array.from({ length: days }, (_, i) => ({ label: String(i + 1).padStart(2, "0"), income: 0, expense: 0 }));
-    mtx.forEach((t) => {
-      const d = +t.date.slice(8, 10) - 1;
-      if (d >= 0 && d < days) daily[d][t.type] += t.amount;
-    });
-    let cum = 0, cumExp = 0;
-    return daily.map((r) => { cum += r.income - r.expense; cumExp += r.expense; return { ...r, balance: cum, cumExpense: cumExp }; });
-  }, [mtx, month]);
-
-  const trend = range === "year" ? yearTrend : monthTrend;
-
-  const byCat = useMemo(() => {
-    const map = {};
-    mtx.filter((t) => t.type === "expense").forEach((t) => { map[t.category] = (map[t.category] || 0) + t.amount; });
-    return Object.entries(map).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
-  }, [mtx]);
-
-  const overBudget = Object.entries(budgets).filter(([cat, lim]) => {
-    const spent = mtx.filter((t) => t.type === "expense" && t.category === cat).reduce((s, t) => s + t.amount, 0);
-    return lim > 0 && spent > lim;
-  });
+  const bal = income - expense;
+  const rebate = mtx.reduce((s, t) => s + rebateOf(t, cards), 0);
+  const budgeted = CATEGORIES.expense.filter((c) => (budgets[c] || 0) > 0);
+  const hasBudget = budgeted.length > 0;
+  const left = budgeted.reduce((s, c) => s + Math.max(0, budgets[c] - (spentBy[c] || 0)), 0);
+  const pend = trips.filter((t) => !t.reimbursed && t.items.length > 0);
+  const pendAmt = pend.reduce((s, t) => s + t.items.reduce((a, x) => a + x.amount, 0), 0);
+  const mNum = +month.slice(5);
 
   return (
     <div className="stack">
-      <div className="stat-grid four">
-        <Stat label="本月收入" value={income} color="#2C6E7F" icon={TrendingUp} />
-        <Stat label="本月支出" value={expense} color="#B5533E" icon={TrendingDown} />
-        <Stat label="結餘" value={balance} color={balance >= 0 ? "#5A7D4E" : "#B5533E"} icon={Wallet} highlight />
-        <Stat label="本月回饋" value={monthRebate} color="#8C6A9E" icon={CreditCard} />
+      <section className="hero">
+        <div className="hero-glow" aria-hidden="true" /><div className="hero-line" aria-hidden="true" />
+        <div className="hero-body">
+          <div className="hero-label">{hasBudget ? `${mNum} 月預算還能花` : `${mNum} 月結餘`}</div>
+          <div className="hero-num"><span className="cur">NT$</span><span className={"big" + (!hasBudget && bal < 0 ? " neg" : "")}>{num(hasBudget ? left : bal)}</span></div>
+          <div className="pills">
+            {hasBudget && <span className="pill"><i style={{ background: bal >= 0 ? "#6FCF8F" : "#F2A48E" }} />結餘 {num(bal)}</span>}
+            {pend.length > 0 && <button className="pill" onClick={() => goto("travel")}><i style={{ background: "#E0A458" }} />{pend.length} 趟差旅待報帳</button>}
+            <span className="pill"><i style={{ background: "#B99AD6" }} />回饋 {num(rebate)}</span>
+          </div>
+          <div className="hero-cap">{hasBudget ? "只計有設預算的分類" : "到「預算」設定分類上限，這裡會改成顯示還能花多少"}</div>
+        </div>
+      </section>
+
+      <div className="sec-head"><h2>這筆花在哪裡？</h2><span>點分類開始記帳</span></div>
+      <div className="tiles">
+        {CATEGORIES.expense.map((c) => {
+          const s = catStyle(c);
+          const lim = budgets[c] || 0, sp = spentBy[c] || 0;
+          let status;
+          if (lim > 0) status = sp > lim ? <small className="over">超支<em>{num(sp - lim)}</em></small> : <small>剩餘<em>{num(lim - sp)}</em></small>;
+          else status = sp > 0 ? <small>已花<em>{num(sp)}</em></small> : <small>本月未記</small>;
+          return (
+            <button key={c} className="tile" style={{ background: s.bg, borderColor: s.fg + "2E" }} onClick={() => onAdd({ type: "expense", category: c })}>
+              <span className="tile-ico" style={{ color: s.fg }}><s.Icon size={20} /></span>
+              <span className="tile-txt"><b>{c}</b>{status}</span>
+            </button>
+          );
+        })}
       </div>
 
-      {overBudget.length > 0 && (
-        <Card className="alert">
-          <div className="alert-head"><AlertTriangle size={18} /> 預算超支預警</div>
-          {overBudget.map(([cat, lim]) => {
-            const spent = mtx.filter((t) => t.type === "expense" && t.category === cat).reduce((s, t) => s + t.amount, 0);
-            return <div key={cat} className="alert-line">「{cat}」已支出 <span className="mono">{fmt(spent)}</span>，超出上限 <span className="mono">{fmt(spent - lim)}</span></div>;
-          })}
-        </Card>
+      <button className="row-card" onClick={() => onAdd({ type: "income", category: "薪資" })}>
+        <span className="list-ico" style={{ color: "#8FD0DE", background: "#8FD0DE24" }}><Banknote size={19} /></span>
+        <span className="list-txt"><b>記一筆收入</b><small>薪資、獎金、報帳退款、利息</small></span>
+        <span className="list-amt inc">{num(income)}</span>
+        <ChevronRight size={18} className="list-chev" />
+      </button>
+      {pendAmt > 0 && (
+        <button className="row-card" onClick={() => goto("travel")}>
+          <span className="list-ico" style={{ color: "#E0A458", background: "#E0A45824" }}><Plane size={19} /></span>
+          <span className="list-txt"><b>差旅代墊</b><small>{pend.map((t) => t.name).join("、")}，待報帳</small></span>
+          <span className="list-amt">{num(pendAmt)}</span>
+          <ChevronRight size={18} className="list-chev" />
+        </button>
       )}
+      <button className="row-card" onClick={() => goto("cards")}>
+        <span className="list-ico" style={{ color: "#B99AD6", background: "#B99AD624" }}><CreditCard size={19} /></span>
+        <span className="list-txt"><b>信用卡回饋</b><small>{cards.length ? `${mNum} 月累計` : "還沒有設定信用卡"}</small></span>
+        <span className="list-amt">{num(rebate)}</span>
+        <ChevronRight size={18} className="list-chev" />
+      </button>
+    </div>
+  );
+}
 
-      <Card>
-        <SectionTitle right={
-          <div className="toggle">
-            <button className={range === "month" ? "on" : ""} onClick={() => setRange("month")}>月</button>
-            <button className={range === "year" ? "on" : ""} onClick={() => setRange("year")}>年</button>
+// ---------- 記一筆面板：選分類 → 打金額 → 記下 ----------
+const KEYS_PAD = ["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0", "del"];
+function QuickAdd({ init, cards, budgets, transactions, onSave, onClose }) {
+  const [type, setType] = useState(init.type || "expense");
+  const [category, setCategory] = useState(init.category || CATEGORIES[init.type || "expense"][0]);
+  const [amt, setAmt] = useState("");
+  const [cardId, setCardId] = useState(() => { try { return localStorage.getItem("ledger:lastCard") || ""; } catch { return ""; } });
+  const [note, setNote] = useState("");
+  const [date, setDate] = useState(todayISO());
+
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => { document.body.style.overflow = prev; window.removeEventListener("keydown", onKey); };
+  }, [onClose]);
+
+  const n = parseFloat(amt) || 0;
+  const validCard = cards.some((c) => c.id === cardId) ? cardId : "";
+  const card = cards.find((c) => c.id === validCard);
+  const rebate = type === "expense" && card ? Math.round(n * (card.rate || 0) / 100) : 0;
+  const m = monthKey(date);
+  const spent = transactions.filter((t) => t.type === "expense" && t.category === category && monthKey(t.date) === m).reduce((s, t) => s + t.amount, 0);
+  const lim = budgets[category] || 0;
+  const after = lim - spent - n;
+
+  const press = (k) => {
+    setAmt((a) => {
+      if (k === "del") return a.slice(0, -1);
+      if (k === ".") return a.includes(".") ? a : (a === "" ? "0" : a) + ".";
+      if (a.includes(".") && a.split(".")[1].length >= 2) return a;
+      if (a.replace(".", "").length >= 8) return a;
+      return (a === "0" ? "" : a) + k;
+    });
+  };
+  const switchType = (tp) => { if (tp === type) return; setType(tp); setCategory(CATEGORIES[tp][0]); };
+  const save = () => {
+    if (n <= 0) return;
+    const cid = type === "expense" ? validCard : "";
+    try { if (type === "expense") localStorage.setItem("ledger:lastCard", cid); } catch { /* 無痕模式可能無法寫入 */ }
+    onSave({ id: uid(), date, type, category, amount: n, note: note.trim(), cardId: cid });
+  };
+
+  const parts = (amt === "" ? "0" : amt).split(".");
+  const amtText = (parseInt(parts[0], 10) || 0).toLocaleString("en-US") + (parts.length > 1 ? "." + parts[1] : "");
+
+  return (
+    <div className="sheet" role="dialog" aria-modal="true" aria-label={type === "expense" ? "記一筆支出" : "記一筆收入"}>
+      <div className="sheet-glow" aria-hidden="true" />
+      <div className="sheet-inner">
+        <header className="sheet-head">
+          <button className="circle-btn" onClick={onClose} aria-label="關閉"><X size={18} /></button>
+          <div className="seg">
+            <button className={type === "expense" ? "on" : ""} onClick={() => switchType("expense")}>支出</button>
+            <button className={type === "income" ? "on" : ""} onClick={() => switchType("income")}>收入</button>
           </div>
-        }>{range === "year" ? "收支趨勢（近 12 個月）" : `當月每日走勢（${month}）`}</SectionTitle>
-        {trend.length === 0 ? <Empty text="尚無資料，先到「收支」新增一筆" /> : range === "year" ? (
-          <ResponsiveContainer width="100%" height={240}>
-            <LineChart data={trend} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#EDE9E0" />
-              <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#7A857B" }} interval={0} />
-              <YAxis tick={{ fontSize: 10, fill: "#7A857B" }} tickFormatter={(v) => (v / 1000) + "k"} />
-              <Tooltip formatter={(v) => fmt(v)} />
-              <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Line type="monotone" dataKey="income" name="收入" stroke="#2C6E7F" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="expense" name="支出" stroke="#B5533E" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="balance" name="結餘" stroke="#5A7D4E" strokeWidth={2} strokeDasharray="4 3" dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
-        ) : (
-          <ResponsiveContainer width="100%" height={280}>
-            <ComposedChart data={trend} margin={{ top: 8, right: 2, left: -14, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#EDE9E0" />
-              <XAxis dataKey="label" tick={{ fontSize: 9, fill: "#7A857B" }} interval={4} />
-              <YAxis yAxisId="left" tick={{ fontSize: 9, fill: "#7A857B" }} width={34} tickFormatter={(v) => Math.round(v / 1000) + "k"} />
-              <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 9, fill: "#B5533E" }} width={30} tickFormatter={(v) => Math.round(v / 1000) + "k"} />
-              <Tooltip formatter={(v) => fmt(v)} labelFormatter={(l) => `${month}-${l}`} />
-              <Legend wrapperStyle={{ fontSize: 11 }} />
-              <Bar yAxisId="right" dataKey="expense" name="當日支出" fill="#E0A458" radius={[2, 2, 0, 0]} maxBarSize={12} />
-              <Line yAxisId="left" type="monotone" dataKey="cumExpense" name="累積支出" stroke="#B5533E" strokeWidth={2} dot={false} />
-              <Line yAxisId="left" type="monotone" dataKey="balance" name="累積結餘" stroke="#5A7D4E" strokeWidth={2} dot={false} />
-            </ComposedChart>
-          </ResponsiveContainer>
-        )}
-      </Card>
+          <input className="date-pill" type="date" value={date} onChange={(e) => setDate(e.target.value || todayISO())} aria-label="日期" />
+        </header>
 
-      <Card>
-        <SectionTitle>本月支出結構</SectionTitle>
-        {byCat.length === 0 ? <Empty text="本月尚無支出" /> : (
-          <div className="pie-row">
-            <ResponsiveContainer width="100%" height={200}>
-              <PieChart>
-                <Pie data={byCat} dataKey="value" nameKey="name" innerRadius={42} outerRadius={75} paddingAngle={2} isAnimationActive={false}>
-                  {byCat.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
-                </Pie>
-                <Tooltip formatter={(v) => fmt(v)} />
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="legend-list">
-              {byCat.map((c, i) => (
-                <div key={c.name} className="legend-item">
-                  <span className="legend-name"><span className="dot" style={{ background: PALETTE[i % PALETTE.length] }} />{c.name}</span>
-                  <span className="mono">{fmt(c.value)}</span>
-                </div>
+        <div className="cat-scroll">
+          {CATEGORIES[type].map((c) => {
+            const s = catStyle(c); const on = c === category;
+            return (
+              <button key={c} className={"cat-chip" + (on ? " on" : "")} aria-pressed={on}
+                style={on ? { background: s.bg, borderColor: s.fg, color: "#F2EEE6" } : undefined} onClick={() => setCategory(c)}>
+                <s.Icon size={15} color={s.fg} />{c}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="amt-area">
+          <div className="amt"><span className="cur">NT$</span><span className="big">{amtText}</span></div>
+          {type === "expense" && lim > 0 && (after >= 0
+            ? <div className="amt-sub">記下後{category}剩餘 <b>{num(after)}</b></div>
+            : <div className="amt-sub over">記下後{category}會超支 <b>{num(-after)}</b></div>)}
+          {type === "expense" && !lim && <div className="amt-sub">{category}本月已花 <b>{num(spent)}</b></div>}
+        </div>
+
+        {type === "expense" && (
+          <div className="pay">
+            <div className="pay-head"><span>付款方式</span>{card && <span>預估回饋 <b>+{num(rebate)}</b></span>}</div>
+            <div className="pay-chips">
+              <button className={"pay-chip" + (!validCard ? " on" : "")} aria-pressed={!validCard} onClick={() => setCardId("")}>現金</button>
+              {cards.map((c) => (
+                <button key={c.id} className={"pay-chip" + (validCard === c.id ? " on" : "")} aria-pressed={validCard === c.id} onClick={() => setCardId(c.id)}>
+                  {c.name}{c.rate ? ` ${c.rate}%` : ""}
+                </button>
               ))}
             </div>
           </div>
         )}
-      </Card>
-    </div>
-  );
-}
-function Stat({ label, value, color, icon: Icon, highlight, decimal }) {
-  return (
-    <div className={"stat" + (highlight ? " highlight" : "")} style={highlight ? { background: color } : {}}>
-      <div className="stat-label"><Icon size={14} /> {label}</div>
-      <div className="mono stat-value" style={{ color: highlight ? "#fff" : color }}>{decimal ? fmt2(value) : fmt(value)}</div>
+
+        <label className="note-row"><span>備註</span><input value={note} onChange={(e) => setNote(e.target.value)} placeholder={type === "expense" ? "例如：午餐便當" : "例如：九月薪資"} /></label>
+
+        <div className="keypad">
+          {KEYS_PAD.map((k) => (
+            <button key={k} onClick={() => press(k)} aria-label={k === "del" ? "刪除" : k}>{k === "del" ? <Delete size={22} /> : k}</button>
+          ))}
+        </div>
+
+        <button className="save-btn" disabled={n <= 0} onClick={save}>記下</button>
+      </div>
     </div>
   );
 }
 
-// ---------- Transactions ----------
-function Transactions({ transactions, setTransactions, month, cards }) {
-  const [form, setForm] = useState({ date: todayISO(), type: "expense", category: "餐飲", amount: "", note: "", cardId: "" });
+// ---------- 明細 ----------
+function Ledger({ transactions, setTransactions, month, cards }) {
   const [editId, setEditId] = useState(null);
   const [draft, setDraft] = useState(null);
+  const [msg, setMsg] = useState("");
   const fileRef = useRef();
 
-  const add = () => {
-    if (!form.amount || +form.amount <= 0) return;
-    setTransactions((p) => [{ id: uid(), ...form, amount: +form.amount }, ...p]);
-    setForm((f) => ({ ...f, amount: "", note: "" }));
-  };
-  const remove = (id) => setTransactions((p) => p.filter((t) => t.id !== id));
-
-  const startEdit = (t) => { setEditId(t.id); setDraft({ ...t, amount: String(t.amount) }); };
+  const startEdit = (t) => { setEditId(t.id); setDraft({ ...t, amount: String(t.amount), cardId: t.cardId || "", note: t.note || "" }); };
   const cancelEdit = () => { setEditId(null); setDraft(null); };
   const saveEdit = () => {
     if (!draft.amount || +draft.amount <= 0) return;
-    setTransactions((p) => p.map((t) => t.id === editId ? { ...draft, amount: +draft.amount } : t));
+    setTransactions((p) => p.map((t) => t.id === editId ? { ...draft, amount: +draft.amount, cardId: draft.type === "expense" ? draft.cardId : "" } : t));
+    cancelEdit();
+  };
+  const remove = (id) => {
+    if (!window.confirm("確定要刪除這筆紀錄嗎？")) return;
+    setTransactions((p) => p.filter((t) => t.id !== id));
     cancelEdit();
   };
 
@@ -426,114 +526,109 @@ function Transactions({ transactions, setTransactions, month, cards }) {
         rows.push({ id: uid(), date: c[0] || todayISO(), type: /收|income|\+/i.test(c[1]) ? "income" : "expense", category: c[2] || "其他支出", amount: Math.abs(amt), note: c[4] || "", cardId: "" });
       });
       if (rows.length) setTransactions((p) => [...rows, ...p]);
+      setMsg(rows.length ? `已匯入 ${rows.length} 筆` : "沒有讀到可匯入的資料，請確認 CSV 格式");
       e.target.value = "";
     };
     reader.readAsText(file, "utf-8");
   };
 
-  const mtx = transactions.filter((t) => monthKey(t.date) === month).sort((a, b) => b.date.localeCompare(a.date));
+  const mtx = transactions.filter((t) => monthKey(t.date) === month);
+  const income = mtx.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
+  const expense = mtx.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
+  const groups = useMemo(() => {
+    const map = new Map();
+    [...mtx].sort((a, b) => b.date.localeCompare(a.date)).forEach((t) => {
+      if (!map.has(t.date)) map.set(t.date, []);
+      map.get(t.date).push(t);
+    });
+    return [...map.entries()];
+  }, [mtx]);
+
+  const editForm = (
+    draft && <div className="tx-edit">
+      <div className="form-grid">
+        <Field label="日期"><input type="date" value={draft.date} onChange={(e) => setDraft({ ...draft, date: e.target.value })} /></Field>
+        <Field label="類型">
+          <select value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value, category: CATEGORIES[e.target.value][0], cardId: e.target.value === "income" ? "" : draft.cardId })}>
+            <option value="expense">支出</option><option value="income">收入</option>
+          </select>
+        </Field>
+        <Field label="分類">
+          <select value={draft.category} onChange={(e) => setDraft({ ...draft, category: e.target.value })}>
+            {CATEGORIES[draft.type].map((c) => <option key={c}>{c}</option>)}
+          </select>
+        </Field>
+        <Field label="金額"><input type="number" inputMode="decimal" value={draft.amount} onChange={(e) => setDraft({ ...draft, amount: e.target.value })} /></Field>
+        {draft.type === "expense" && (
+          <Field label="支付卡片">
+            <select value={draft.cardId} onChange={(e) => setDraft({ ...draft, cardId: e.target.value })}>
+              <option value="">現金／未指定</option>
+              {cards.map((c) => <option key={c.id} value={c.id}>{c.name}（{c.rate}%）</option>)}
+            </select>
+          </Field>
+        )}
+        <Field label="備註"><input value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} placeholder="選填" /></Field>
+      </div>
+      <div className="edit-actions">
+        <button className="gold-btn" onClick={saveEdit}><Check size={16} /> 儲存</button>
+        <button className="ghost-btn" onClick={cancelEdit}>取消</button>
+        <button className="danger-btn" onClick={() => remove(draft.id)}><Trash2 size={15} /> 刪除</button>
+      </div>
+    </div>
+  );
 
   return (
     <div className="stack">
-      <Card>
-        <SectionTitle right={<button className="ghost-btn" onClick={() => fileRef.current.click()}><Upload size={14} /> 匯入 CSV</button>}>新增一筆</SectionTitle>
-        <input ref={fileRef} type="file" accept=".csv" onChange={importCSV} style={{ display: "none" }} />
-        <div className="form-grid">
-          <Field label="日期"><input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
-          <Field label="類型">
-            <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value, category: CATEGORIES[e.target.value][0], cardId: e.target.value === "income" ? "" : form.cardId })}>
-              <option value="expense">支出</option><option value="income">收入</option>
-            </select>
-          </Field>
-          <Field label="分類">
-            <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
-              {CATEGORIES[form.type].map((c) => <option key={c}>{c}</option>)}
-            </select>
-          </Field>
-          <Field label="金額"><input type="number" inputMode="decimal" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} placeholder="0" /></Field>
-          {form.type === "expense" && (
-            <Field label="支付卡片">
-              <select value={form.cardId} onChange={(e) => setForm({ ...form, cardId: e.target.value })}>
-                <option value="">現金／未指定</option>
-                {cards.map((c) => <option key={c.id} value={c.id}>{c.name}（{c.rate}%）</option>)}
-              </select>
-            </Field>
-          )}
-          <Field label="備註"><input value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder="選填" /></Field>
-        </div>
-        <button className="primary-btn full" onClick={add}><Plus size={18} /> 加入</button>
-        {form.type === "expense" && form.cardId && form.amount > 0 && (
-          <div className="rebate-preview">預估回饋：<span className="mono">{fmt(Math.round(+form.amount * (cards.find((c) => c.id === form.cardId)?.rate || 0) / 100))}</span></div>
-        )}
-        <div className="hint">CSV 格式：日期,類型,分類,金額,備註（第一列可為標題）</div>
-      </Card>
+      <div className="page-head">
+        <h1>明細</h1>
+        <button className="ghost-btn" onClick={() => fileRef.current.click()}><Upload size={15} /> 匯入 CSV</button>
+      </div>
+      <input ref={fileRef} type="file" accept=".csv" onChange={importCSV} style={{ display: "none" }} />
+      {msg && <div className="hint" style={{ marginTop: 0 }}>{msg}</div>}
 
-      <Card className="flush">
-        <div className="card-pad"><SectionTitle>{month} 明細（{mtx.length} 筆）</SectionTitle></div>
-        {mtx.length === 0 ? <Empty text="本月尚無紀錄" /> : (
-          <div className="tx-list">
-            {mtx.map((t) => {
-              const reb = rebateOf(t, cards);
-              if (editId === t.id) {
+      <section className="sum3">
+        <div className="hero-line" aria-hidden="true" />
+        <div><small>收入</small><b style={{ color: "#8FD0DE" }}>{num(income)}</b></div>
+        <div><small>支出</small><b style={{ color: "#F2A48E" }}>{num(expense)}</b></div>
+        <div><small>結餘</small><b>{num(income - expense)}</b></div>
+      </section>
+
+      {groups.length === 0 ? <div className="card"><Empty text="本月還沒有紀錄，到「記一筆」新增" /></div> : groups.map(([date, list]) => {
+        const dExp = list.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
+        const dInc = list.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
+        const wd = WEEK[new Date(date + "T00:00:00").getDay()];
+        return (
+          <div key={date} className="day">
+            <div className="day-head">
+              <span><b>{+date.slice(5, 7)}/{+date.slice(8, 10)}</b><em>週{wd}</em></span>
+              <span>{dExp > 0 && <>支出 <b>{num(dExp)}</b></>}{dExp > 0 && dInc > 0 && "　"}{dInc > 0 && <>收入 <b>{num(dInc)}</b></>}</span>
+            </div>
+            <div className="day-list">
+              {list.map((t) => {
+                if (editId === t.id) return <React.Fragment key={t.id}>{editForm}</React.Fragment>;
+                const s = catStyle(t.category);
+                const reb = rebateOf(t, cards);
+                const cn = cardName(t.cardId, cards);
                 return (
-                  <div key={t.id} className="tx-edit">
-                    <div className="form-grid">
-                      <Field label="日期"><input type="date" value={draft.date} onChange={(e) => setDraft({ ...draft, date: e.target.value })} /></Field>
-                      <Field label="類型">
-                        <select value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value, category: CATEGORIES[e.target.value][0], cardId: e.target.value === "income" ? "" : draft.cardId })}>
-                          <option value="expense">支出</option><option value="income">收入</option>
-                        </select>
-                      </Field>
-                      <Field label="分類">
-                        <select value={draft.category} onChange={(e) => setDraft({ ...draft, category: e.target.value })}>
-                          {CATEGORIES[draft.type].map((c) => <option key={c}>{c}</option>)}
-                        </select>
-                      </Field>
-                      <Field label="金額"><input type="number" inputMode="decimal" value={draft.amount} onChange={(e) => setDraft({ ...draft, amount: e.target.value })} /></Field>
-                      {draft.type === "expense" && (
-                        <Field label="支付卡片">
-                          <select value={draft.cardId || ""} onChange={(e) => setDraft({ ...draft, cardId: e.target.value })}>
-                            <option value="">現金／未指定</option>
-                            {cards.map((c) => <option key={c.id} value={c.id}>{c.name}（{c.rate}%）</option>)}
-                          </select>
-                        </Field>
-                      )}
-                      <Field label="備註"><input value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} placeholder="選填" /></Field>
-                    </div>
-                    <div className="edit-actions">
-                      <button className="teal-btn full" onClick={saveEdit}><Check size={16} /> 儲存</button>
-                      <button className="ghost-btn full" onClick={cancelEdit}><X size={16} /> 取消</button>
-                    </div>
-                  </div>
+                  <button key={t.id} className="tx" onClick={() => startEdit(t)} aria-label={`${t.category} ${num(t.amount)}，點擊修改`}>
+                    <span className="tx-ico" style={{ background: s.bg, color: s.fg }}><s.Icon size={18} /></span>
+                    <span className="tx-txt"><b>{t.note || t.category}</b><small>{t.type === "expense" ? (t.note ? `${t.category}，${cn || "現金"}` : (cn || "現金")) : (t.note ? t.category : "收入")}</small></span>
+                    <span className="tx-val">
+                      <b className={t.type}>{t.type === "income" ? "+" : "−"}{num(t.amount)}</b>
+                      {reb > 0 && <small>回饋 {num(reb)}</small>}
+                    </span>
+                  </button>
                 );
-              }
-              return (
-                <div key={t.id} className="tx-row">
-                  <div className="tx-main">
-                    <span className="mono tx-fulldate">{t.date.slice(8, 10)}</span>
-                    <span className={"chip " + t.type}>{t.category}</span>
-                    <span className="tx-note">
-                      {t.cardId && <span className="card-tag"><CreditCard size={11} />{cardName(t.cardId, cards)}</span>}
-                      {t.note || (t.cardId ? "" : "—")}
-                    </span>
-                  </div>
-                  <div className="tx-right">
-                    <span className="tx-nums">
-                      <span className={"mono tx-amt " + t.type}>{t.type === "income" ? "+" : "−"}{fmt(t.amount)}</span>
-                      {reb > 0 && <span className="mono tx-reb">回饋 {fmt(reb)}</span>}
-                    </span>
-                    <button className="icon-btn" onClick={() => startEdit(t)}><Pencil size={15} /></button>
-                    <button className="icon-btn" onClick={() => remove(t.id)}><Trash2 size={16} /></button>
-                  </div>
-                </div>
-              );
-            })}
+              })}
+            </div>
           </div>
-        )}
-      </Card>
+        );
+      })}
+      <div className="hint">點任一筆可以修改或刪除。CSV 格式：日期,類型,分類,金額,備註（第一列可為標題）</div>
     </div>
   );
 }
+
 
 // ---------- Cards ----------
 function Cards({ cards, setCards, transactions, month }) {
@@ -574,7 +669,7 @@ function Cards({ cards, setCards, transactions, month }) {
             {perCard.map((c) => (
               <div key={c.id} className="card-row">
                 <div className="card-info">
-                  <div className="card-name"><CreditCard size={16} color="#8C6A9E" /> {c.name}</div>
+                  <div className="card-name"><CreditCard size={16} color="#B99AD6" /> {c.name}</div>
                   <div className="card-detail">
                     國內 <input className="rate-inline" type="number" inputMode="decimal" value={c.rate} onChange={(e) => updateField(c.id, "rate", e.target.value)} />%
                     ・海外 <input className="rate-inline" type="number" inputMode="decimal" value={c.overseasRate ?? 0} onChange={(e) => updateField(c.id, "overseasRate", e.target.value)} />%
@@ -655,7 +750,7 @@ function Travel({ trips, setTrips, setTransactions }) {
             <div className={"trip-head" + (open ? " open" : "")} onClick={() => setExpandedId(open ? null : trip.id)}>
               <div>
                 <div className="trip-name">
-                  <Plane size={16} color="#2C6E7F" /> {trip.name}
+                  <Plane size={16} color="#E0A458" /> {trip.name}
                   {trip.reimbursed && <span className="chip income sm"><Check size={11} />已報帳</span>}
                 </div>
                 <div className="trip-meta">{trip.dest && `${trip.dest}・`}{trip.start.slice(5)} ~ {trip.end.slice(5)}・{trip.items.length} 筆</div>
@@ -796,7 +891,7 @@ function Overseas({ overseas, setOverseas, cards, setTransactions }) {
             <div className={"trip-head" + (open ? " open" : "")} onClick={() => setExpandedId(open ? null : trip.id)}>
               <div>
                 <div className="trip-name">
-                  <Globe size={16} color="#2C6E7F" /> {trip.name}
+                  <Globe size={16} color="#7FCAD4" /> {trip.name}
                   {trip.settled && <span className="chip income sm"><Check size={11} />已結算</span>}
                 </div>
                 <div className="trip-meta">{trip.country && `${trip.country}・`}{trip.currency}・{trip.start.slice(5)} ~ {trip.end.slice(5)}・{trip.items.length} 筆</div>
@@ -882,30 +977,157 @@ function Budget({ budgets, setBudgets, transactions, month }) {
   const mtx = transactions.filter((t) => monthKey(t.date) === month && t.type === "expense");
   const setLimit = (cat, val) => setBudgets((p) => ({ ...p, [cat]: +val || 0 }));
   return (
-    <Card>
-      <SectionTitle>月度分類預算（{month}）</SectionTitle>
-      <div className="hint" style={{ marginBottom: 16 }}>設定各分類上限，超支會在儀表板顯示紅色預警。</div>
-      <div className="budget-list">
-        {CATEGORIES.expense.map((cat) => {
-          const spent = mtx.filter((t) => t.category === cat).reduce((s, t) => s + t.amount, 0);
-          const lim = budgets[cat] || 0;
-          const pct = lim > 0 ? Math.min(100, (spent / lim) * 100) : 0;
-          const over = lim > 0 && spent > lim;
-          return (
-            <div key={cat} className="budget-row">
-              <div className="budget-head">
-                <span className="budget-cat">{cat}</span>
-                <input type="number" inputMode="decimal" value={budgets[cat] || ""} onChange={(e) => setLimit(cat, e.target.value)} placeholder="上限" className="budget-input" />
+    <div className="stack">
+      <div className="page-head"><h1>預算</h1></div>
+      <div className="card">
+        <div className="hint" style={{ marginTop: 0, marginBottom: 16 }}>設定各分類每月上限。有設上限的分類，首頁會顯示剩餘金額，超支時報表會出現警示。</div>
+        <div className="budget-list">
+          {CATEGORIES.expense.map((cat) => {
+            const s = catStyle(cat);
+            const spent = mtx.filter((t) => t.category === cat).reduce((sum, t) => sum + t.amount, 0);
+            const lim = budgets[cat] || 0;
+            const pct = lim > 0 ? Math.min(100, (spent / lim) * 100) : 0;
+            const over = lim > 0 && spent > lim;
+            return (
+              <div key={cat} className="budget-row">
+                <div className="budget-head">
+                  <span className="budget-cat"><span className="tx-ico sm" style={{ background: s.bg, color: s.fg }}><s.Icon size={15} /></span>{cat}</span>
+                  <input type="number" inputMode="decimal" value={budgets[cat] || ""} onChange={(e) => setLimit(cat, e.target.value)} placeholder="未設上限" className="budget-input" aria-label={`${cat} 每月上限`} />
+                </div>
+                <div className="bar"><div className="bar-fill" style={{ width: `${pct}%`, background: over ? "#E58A6F" : pct > 80 ? "#E0A458" : s.fg }} /></div>
+                <div className={"mono budget-status" + (over ? " over" : "")}>
+                  已花 {num(spent)}{lim > 0 && ` / ${num(lim)}`}{over ? `，超支 ${num(spent - lim)}` : lim > 0 ? `，剩餘 ${num(lim - spent)}` : ""}
+                </div>
               </div>
-              <div className="bar"><div className="bar-fill" style={{ width: `${pct}%`, background: over ? "#B5533E" : pct > 80 ? "#E0A458" : "#2C6E7F" }} /></div>
-              <div className={"mono budget-status" + (over ? " over" : "")}>{fmt(spent)}{lim > 0 && ` / ${fmt(lim)}`}{over && ` ⚠ 超支 ${fmt(spent - lim)}`}</div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
-    </Card>
+    </div>
   );
 }
+
+// ---------- 報表（含原儀表板）----------
+const GRID = "rgba(255,255,255,0.06)";
+const TICK = { fontSize: 10, fill: "#8E887D" };
+const kfmt = (v) => (Math.abs(v) >= 1000 ? Math.round(v / 1000) + "k" : v);
+const TIP = {
+  contentStyle: { background: "#1A1914", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, fontSize: 12 },
+  labelStyle: { color: "#A39D92" }, itemStyle: { color: "#F2EEE6" },
+  formatter: (v) => num(v), cursor: { fill: "rgba(255,255,255,0.04)" },
+};
+
+function Trend({ transactions, month }) {
+  const [range, setRange] = useState("month");
+  const mtx = useMemo(() => transactions.filter((t) => monthKey(t.date) === month), [transactions, month]);
+  const monthData = useMemo(() => {
+    const days = new Date(+month.slice(0, 4), +month.slice(5, 7), 0).getDate();
+    const daily = Array.from({ length: days }, (_, i) => ({ label: String(i + 1), income: 0, expense: 0 }));
+    mtx.forEach((t) => { const d = +t.date.slice(8, 10) - 1; if (d >= 0 && d < days) daily[d][t.type] += t.amount; });
+    let cum = 0, cumExp = 0;
+    return daily.map((r) => { cum += r.income - r.expense; cumExp += r.expense; return { ...r, balance: cum, cumExpense: cumExp }; });
+  }, [mtx, month]);
+  const yearData = useMemo(() => {
+    const map = {};
+    transactions.forEach((t) => {
+      const k = monthKey(t.date); if (!k || k > month) return;
+      map[k] = map[k] || { key: k, income: 0, expense: 0 };
+      map[k][t.type] += t.amount;
+    });
+    if (!map[month]) map[month] = { key: month, income: 0, expense: 0 };
+    return Object.values(map).sort((a, b) => a.key.localeCompare(b.key)).slice(-6)
+      .map((r) => ({ ...r, label: `${+r.key.slice(5)}月`, balance: r.income - r.expense }));
+  }, [transactions, month]);
+  const maxDay = monthData.reduce((m, r) => (r.expense > (m?.expense || 0) ? r : m), null);
+
+  return (
+    <section className="panel">
+      <div className="panel-head">
+        <h2>{range === "month" ? `${+month.slice(5)} 月每日走勢` : `近 ${yearData.length} 個月收支`}</h2>
+        <div className="seg" role="group" aria-label="切換期間">
+          <button className={range === "month" ? "on" : ""} aria-pressed={range === "month"} onClick={() => setRange("month")}>月</button>
+          <button className={range === "year" ? "on" : ""} aria-pressed={range === "year"} onClick={() => setRange("year")}>年</button>
+        </div>
+      </div>
+      {range === "month" ? (mtx.length === 0 ? <Empty text="本月尚無資料" /> : (
+        <>
+          <ResponsiveContainer width="100%" height={250}>
+            <ComposedChart data={monthData} margin={{ top: 6, right: 0, left: -4, bottom: 0 }}>
+              <CartesianGrid stroke={GRID} vertical={false} />
+              <XAxis dataKey="label" tick={TICK} interval={4} axisLine={false} tickLine={false} />
+              <YAxis yAxisId="left" tick={TICK} width={40} axisLine={false} tickLine={false} tickFormatter={kfmt} />
+              <YAxis yAxisId="right" orientation="right" tick={{ ...TICK, fill: "#C9955A" }} width={32} axisLine={false} tickLine={false} tickFormatter={kfmt} />
+              <Tooltip {...TIP} labelFormatter={(l) => `${+month.slice(5)}/${l}`} />
+              <Bar yAxisId="right" dataKey="expense" name="當日支出" fill="rgba(224,164,88,0.62)" radius={[2, 2, 0, 0]} maxBarSize={10} />
+              <Line yAxisId="left" type="monotone" dataKey="cumExpense" name="累積支出" stroke="#E58A6F" strokeWidth={2} dot={false} />
+              <Line yAxisId="left" type="monotone" dataKey="balance" name="累積結餘" stroke="#8DC48A" strokeWidth={2.2} dot={false} />
+            </ComposedChart>
+          </ResponsiveContainer>
+          <div className="legend-row">
+            <span><i style={{ background: "rgba(224,164,88,0.62)" }} />當日支出（右軸）</span>
+            <span><i className="ln" style={{ background: "#E58A6F" }} />累積支出</span>
+            <span><i className="ln" style={{ background: "#8DC48A" }} />累積結餘</span>
+          </div>
+          {maxDay && maxDay.expense > 0 && <div className="cap">單日最高 {+month.slice(5)}/{maxDay.label} 支出 {num(maxDay.expense)}</div>}
+        </>
+      )) : (
+        <>
+          <ResponsiveContainer width="100%" height={240}>
+            <ComposedChart data={yearData} margin={{ top: 6, right: 4, left: -4, bottom: 0 }}>
+              <CartesianGrid stroke={GRID} vertical={false} />
+              <XAxis dataKey="label" tick={TICK} axisLine={false} tickLine={false} />
+              <YAxis tick={TICK} width={40} axisLine={false} tickLine={false} tickFormatter={kfmt} />
+              <Tooltip {...TIP} />
+              <Bar dataKey="income" name="收入" fill="#6FB6C6" radius={[3, 3, 0, 0]} maxBarSize={14} />
+              <Bar dataKey="expense" name="支出" fill="#E58A6F" radius={[3, 3, 0, 0]} maxBarSize={14} />
+              <Line type="monotone" dataKey="balance" name="結餘" stroke="#8DC48A" strokeWidth={2.2} dot={{ r: 3.5, fill: "#15140F", stroke: "#8DC48A", strokeWidth: 2 }} />
+            </ComposedChart>
+          </ResponsiveContainer>
+          <div className="legend-row">
+            <span><i style={{ background: "#6FB6C6" }} />收入</span>
+            <span><i style={{ background: "#E58A6F" }} />支出</span>
+            <span><i className="ln" style={{ background: "#8DC48A" }} />結餘</span>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function Donut({ mtx }) {
+  const map = {};
+  mtx.filter((t) => t.type === "expense").forEach((t) => { map[t.category] = (map[t.category] || 0) + t.amount; });
+  const sorted = Object.entries(map).sort((a, b) => b[1] - a[1]);
+  const total = sorted.reduce((s, x) => s + x[1], 0);
+  const data = sorted.slice(0, 6).map(([name, value]) => ({ name, value, color: catStyle(name).fg }));
+  const rest = sorted.slice(6).reduce((s, x) => s + x[1], 0);
+  if (rest > 0) data.push({ name: "其餘分類", value: rest, color: "#6E685E" });
+  return (
+    <section className="panel">
+      <div className="panel-head"><h2>支出結構</h2></div>
+      {total === 0 ? <Empty text="本月尚無支出" /> : (
+        <div className="donut-row">
+          <div className="donut-box">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie data={data} dataKey="value" nameKey="name" innerRadius={46} outerRadius={68} paddingAngle={1.5} stroke="none" isAnimationActive={false}>
+                  {data.map((d) => <Cell key={d.name} fill={d.color} />)}
+                </Pie>
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="donut-center"><small>總支出</small><b>{num(total)}</b></div>
+          </div>
+          <div className="donut-legend">
+            {data.map((d) => (
+              <div key={d.name} className="dl-row"><i style={{ background: d.color }} /><span>{d.name}</span><em>{Math.round(d.value / total * 100)}%</em><b>{num(d.value)}</b></div>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 
 // ---------- Reports ----------
 function Reports({ transactions, trips, month, cards, budgets, overseas, setOverseas, setTransactions, setTrips, setCards, setBudgets }) {
@@ -998,10 +1220,30 @@ function Reports({ transactions, trips, month, cards, budgets, overseas, setOver
   const income = mtx.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
   const expense = mtx.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
   const rebate = mtx.reduce((s, t) => s + rebateOf(t, cards), 0);
+  const bal = income - expense;
+  const rate = income ? bal / income * 100 : null;
+  const pm = prevMonthKey(month);
+  const ptx = transactions.filter((t) => monthKey(t.date) === pm);
+  const pIncome = ptx.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
+  const pExpense = ptx.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
+  const delta = (cur, prev, upGood) => {
+    if (!prev) return null;
+    const d = (cur - prev) / Math.abs(prev) * 100;
+    if (Math.abs(d) < 0.05) return { t: "與上月持平", c: "flat" };
+    const up = d > 0;
+    return { t: `${up ? "▲" : "▼"} ${Math.abs(d).toFixed(1)}% 比上月`, c: up === upGood ? "good" : "bad" };
+  };
+  const di = delta(income, pIncome, true), de = delta(expense, pExpense, false);
+  const spentBy = {};
+  mtx.forEach((t) => { if (t.type === "expense") spentBy[t.category] = (spentBy[t.category] || 0) + t.amount; });
+  const over = Object.entries(budgets).filter(([c, l]) => l > 0 && (spentBy[c] || 0) > l);
+  const near = Object.entries(budgets).filter(([c, l]) => { const v = spentBy[c] || 0; return l > 0 && v < l && v >= l * 0.8; });
+  const mNum = +month.slice(5);
 
   // 產生一頁式月報 PDF 並下載（PDF 套件只在按下時才載入，不拖慢 App 開啟速度）
   const [pdfBusy, setPdfBusy] = useState(false);
   const [pdfMsg, setPdfMsg] = useState("");
+  const [showBackup, setShowBackup] = useState(false);
   const downloadReport = async () => {
     if (mtx.length === 0) { setPdfMsg(`${month} 沒有任何收支紀錄，無法產生月報。`); return; }
     setPdfBusy(true); setPdfMsg("");
@@ -1030,50 +1272,75 @@ function Reports({ transactions, trips, month, cards, budgets, overseas, setOver
 
   return (
     <div className="stack">
-      <Card>
-        <SectionTitle>{month} 月報摘要</SectionTitle>
-        <div className="summary-grid">
-          <Summary label="收入" value={income} />
-          <Summary label="支出" value={expense} />
-          <Summary label="結餘" value={income - expense} accent />
-          <Summary label="信用卡回饋" value={rebate} />
-          <Summary label="待報帳差旅" value={pendingTravel} warn />
+      <div className="page-head"><h1>報表</h1></div>
+
+      <section className="hero">
+        <div className="hero-glow" aria-hidden="true" /><div className="hero-line" aria-hidden="true" />
+        <div className="hero-body">
+          <div className="hero-label">{mNum} 月結餘</div>
+          <div className="hero-num"><span className="cur">NT$</span><span className={"big" + (bal < 0 ? " neg" : "")}>{num(bal)}</span></div>
+          <div className="mini2">
+            <div className="mini"><small>收入</small><b className="inc">{num(income)}</b>{di && <em className={di.c}>{di.t}</em>}</div>
+            <div className="mini"><small>支出</small><b className="exp">{num(expense)}</b>{de && <em className={de.c}>{de.t}</em>}</div>
+          </div>
+          <div className="pills">
+            <span className="pill"><i style={{ background: "#6FCF8F" }} />儲蓄率 {rate === null ? "—" : rate.toFixed(1) + "%"}</span>
+            <span className="pill"><i style={{ background: "#B99AD6" }} />回饋 {num(rebate)}</span>
+            {pendingTravel > 0 && <span className="pill"><i style={{ background: "#E0A458" }} />待報帳 {num(pendingTravel)}</span>}
+          </div>
         </div>
-        <button className="primary-btn full" onClick={downloadReport} disabled={pdfBusy}>
-          <FileText size={16} /> {pdfBusy ? "月報產生中…" : `下載 ${month} 月報 PDF`}
+      </section>
+
+      {(over.length > 0 || near.length > 0) && (
+        <div className="warn-row">
+          <span className="warn-ico"><AlertTriangle size={18} /></span>
+          <span>
+            <b>預算警示</b>
+            <small>{[...over.map(([c, l]) => `${c}超支 ${num(spentBy[c] - l)}`), ...near.map(([c, l]) => `${c}已用 ${Math.round((spentBy[c] || 0) / l * 100)}%`)].join("；")}</small>
+          </span>
+        </div>
+      )}
+
+      <Trend transactions={transactions} month={month} />
+      <Donut mtx={mtx} />
+
+      <section className="panel">
+        <div className="panel-head"><h2>月報與匯出</h2></div>
+        <button className="gold-btn" onClick={downloadReport} disabled={pdfBusy}>
+          <Download size={18} /> {pdfBusy ? "月報產生中…" : `下載 ${mNum} 月月報 PDF`}
         </button>
-        {pdfMsg && <div className="hint" style={{ marginTop: 10 }}>{pdfMsg}</div>}
-      </Card>
-
-      <Card>
-        <SectionTitle>匯出與備份</SectionTitle>
-        <div className="export-btns">
-          <button className="teal-btn" onClick={exportTx}><Download size={15} /> 本月收支 CSV</button>
-          <button className="teal-btn" onClick={exportRebate}><Download size={15} /> 回饋明細 CSV</button>
-          <button className="teal-btn" onClick={exportTravel}><Download size={15} /> 差旅報帳 CSV</button>
-          <button className="dark-btn" onClick={backupAll}><Download size={15} /> 完整備份 JSON</button>
+        {pdfMsg && <div className="hint" style={{ marginTop: 0 }}>{pdfMsg}</div>}
+        <div className="csv3">
+          <button className="soft-btn" onClick={exportTx}>收支 CSV</button>
+          <button className="soft-btn" onClick={exportRebate}>回饋 CSV</button>
+          <button className="soft-btn" onClick={exportTravel}>差旅 CSV</button>
         </div>
-        <div className="hint" style={{ marginTop: 12 }}>資料已自動同步到雲端，完整備份是額外的保險，建議每月存一份。</div>
-      </Card>
-
-      <Card>
-        <SectionTitle>還原備份</SectionTitle>
-        <div className="hint" style={{ marginBottom: 14 }}>讀入之前匯出的「完整備份 JSON」。合併＝把備份資料補進現有資料（重複自動略過）；覆蓋＝清空現有再用備份取代。</div>
-        <input ref={restoreRef} type="file" accept=".json,application/json" style={{ display: "none" }}
-          onChange={(e) => restore(e, e.target.dataset.mode || "merge")} />
-        <div className="export-btns">
-          <button className="teal-btn" onClick={() => pickRestore("merge")}><Upload size={15} /> 合併匯入</button>
-          <button className="danger-btn" onClick={() => pickRestore("replace")}><Upload size={15} /> 覆蓋還原</button>
-        </div>
+        <button className="list-row bordered" onClick={() => setShowBackup((v) => !v)} aria-expanded={showBackup}>
+          <span className="list-txt"><b>備份與還原</b><small>完整備份 JSON，合併或覆蓋還原</small></span>
+          <ChevronDown size={18} className={"list-chev" + (showBackup ? " up" : "")} />
+        </button>
+        {showBackup && (
+          <div className="backup-box">
+            <button className="soft-btn full" onClick={backupAll}><Download size={15} /> 下載完整備份 JSON</button>
+            <input ref={restoreRef} type="file" accept=".json,application/json" style={{ display: "none" }}
+              onChange={(e) => restore(e, e.target.dataset.mode || "merge")} />
+            <div className="csv2">
+              <button className="soft-btn" onClick={() => pickRestore("merge")}><Upload size={15} /> 合併匯入</button>
+              <button className="danger-btn" onClick={() => pickRestore("replace")}><Upload size={15} /> 覆蓋還原</button>
+            </div>
+            <div className="hint" style={{ marginTop: 0 }}>合併：把備份資料補進現有資料，重複自動略過。覆蓋：清空現有資料再用備份取代。資料已自動同步雲端，備份是額外的保險。</div>
+          </div>
+        )}
         {restoreMsg && (
           <div className={"restore-msg " + restoreMsg.type}>
             {restoreMsg.type === "ok" ? <Check size={15} /> : <AlertTriangle size={15} />} {restoreMsg.text}
           </div>
         )}
-      </Card>
+      </section>
     </div>
   );
 }
+
 function Summary({ label, value, accent, warn, decimal }) {
   return (
     <div className={"summary" + (accent ? " accent" : "") + (warn ? " warn" : "")}>
