@@ -8,6 +8,7 @@ import {
   TrendingUp, TrendingDown, FileText, X, Check, CreditCard, Pencil, Globe,
 } from "lucide-react";
 import { login, logout, watchAuth, cloudLoad, cloudSave } from "./firebase";
+import { buildMonthlyReport } from "./monthlyReport";
 
 // ---------- Constants ----------
 const CATEGORIES = {
@@ -991,33 +992,31 @@ function Reports({ transactions, trips, month, cards, budgets, overseas, setOver
     const a = document.createElement("a"); a.href = url; a.download = `記帳備份_${todayISO()}.json`; a.click(); URL.revokeObjectURL(url);
   };
 
-  const mtx = transactions.filter((t) => monthKey(t.date) === month);
-  const income = mtx.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
-  const expense = mtx.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
-  const rebate = mtx.reduce((s, t) => s + rebateOf(t, cards), 0);
   const pendingTravel = trips.filter((t) => !t.reimbursed).reduce((s, t) => s + t.items.reduce((a, x) => a + x.amount, 0), 0);
+
+  const reportHTML = useMemo(() => buildMonthlyReport({ transactions, cards, budgets, month }), [transactions, cards, budgets, month]);
 
   return (
     <div className="stack">
-      <Card>
-        <SectionTitle>{month} 月報摘要</SectionTitle>
-        <div className="summary-grid">
-          <Summary label="收入" value={income} />
-          <Summary label="支出" value={expense} />
-          <Summary label="結餘" value={income - expense} accent />
-          <Summary label="信用卡回饋" value={rebate} />
-          <Summary label="待報帳差旅" value={pendingTravel} warn />
-        </div>
+      <div className="mr-actions no-print">
+        <span>收支月報會依本月資料自動產生</span>
+        <button className="teal-btn" onClick={() => window.print()}><Download size={15} /> 列印／存 PDF</button>
+      </div>
+      <article className="mr-sheet" dangerouslySetInnerHTML={{ __html: reportHTML }} />
+
+      <Card className="no-print">
+        <SectionTitle>匯出與備份</SectionTitle>
+        {pendingTravel > 0 && <div className="hint" style={{ marginTop: 0, marginBottom: 12 }}>尚有待報帳差旅 <span className="mono">{fmt(pendingTravel)}</span></div>}
         <div className="export-btns">
           <button className="teal-btn" onClick={exportTx}><Download size={15} /> 本月收支 CSV</button>
           <button className="teal-btn" onClick={exportRebate}><Download size={15} /> 回饋明細 CSV</button>
           <button className="teal-btn" onClick={exportTravel}><Download size={15} /> 差旅報帳 CSV</button>
           <button className="dark-btn" onClick={backupAll}><Download size={15} /> 完整備份 JSON</button>
         </div>
-        <div className="hint" style={{ marginTop: 12 }}>資料只存在這支手機的瀏覽器裡。建議定期用「完整備份」存檔，換手機或清除瀏覽器資料前務必先備份。</div>
+        <div className="hint" style={{ marginTop: 12 }}>資料已自動同步到雲端，完整備份是額外的保險，建議每月存一份。</div>
       </Card>
 
-      <Card>
+      <Card className="no-print">
         <SectionTitle>還原備份</SectionTitle>
         <div className="hint" style={{ marginBottom: 14 }}>讀入之前匯出的「完整備份 JSON」。合併＝把備份資料補進現有資料（重複自動略過）；覆蓋＝清空現有再用備份取代。</div>
         <input ref={restoreRef} type="file" accept=".json,application/json" style={{ display: "none" }}
