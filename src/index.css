@@ -409,3 +409,17 @@ em.good { color: var(--good); } em.bad { color: var(--exp); } em.flat { color: v
 .mr-print .mr-term.bal { grid-column: auto; padding-top: 0; border-top: none; }
 .mr-print .mr-donutwrap { grid-template-columns: 140px minmax(0,1fr); justify-items: stretch; }
 .mr-print .mr-term .val { font-size: 26px; }
+
+/* ===== 捷徑自動記帳 ===== */
+.link-banner { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: 14px;
+  background: rgba(143,211,174,0.1); border: 1px solid rgba(143,211,174,0.3); color: #8FD3AE; }
+.link-banner > svg { flex-shrink: 0; margin-top: 2px; }
+.link-banner b { display: block; font-size: 14px; color: #BFE8CF; }
+.link-banner small { display: block; font-size: 12px; color: var(--muted); line-height: 1.6; margin-top: 2px; }
+.src-tag { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 6px; font-style: normal; font-size: 11px; font-weight: 500;
+  vertical-align: 2px; color: #8FD3AE; background: rgba(143,211,174,0.12); }
+.key-box { padding: 12px 14px; border-radius: 12px; background: var(--bg); border: 1px solid var(--line2); font-size: 15px;
+  letter-spacing: .5px; word-break: break-all; color: var(--text); }
+.key-box.small { font-size: 12px; line-height: 1.6; color: var(--muted); letter-spacing: 0; }
+.link-banner.warn { background: rgba(242,164,142,0.1); border-color: rgba(242,164,142,0.35); color: var(--exp); }
+.link-banner.warn b { color: #F6C3B4; }

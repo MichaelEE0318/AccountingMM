@@ -7,7 +7,7 @@ import {
   Plus, Trash2, Upload, Download, Plane, Wallet, AlertTriangle, X, Check, CreditCard, Globe,
   Utensils, Bus, BedDouble, Wrench, Briefcase, Smartphone, Home as HomeIcon, ShoppingBag,
   Banknote, Gift, RotateCcw, Percent, Coins, List, BarChart3, PieChart as PieChartIcon,
-  MoreHorizontal, ChevronDown, ChevronRight, ChevronLeft, Delete, LogOut, User,
+  MoreHorizontal, ChevronDown, ChevronRight, ChevronLeft, Delete, LogOut, User, Zap, Copy, RefreshCw, Eye, EyeOff,
 } from "lucide-react";
 import { login, logout, watchAuth, cloudLoad, cloudSave } from "./firebase";
 import { buildMonthlyReport } from "./monthlyReport";
@@ -71,11 +71,98 @@ const CAT_STYLE = {
 const catStyle = (c) => CAT_STYLE[c] || { Icon: Coins, bg: "#1E1D19", fg: "#B8B1A4" };
 const num = (n) => Math.round(n || 0).toLocaleString("en-US");
 const WEEK = ["日", "一", "二", "三", "四", "五", "六"];
+// 資料清洗：日期只接受 YYYY-MM-DD；匯入或還原的交易一律整理成安全格式
+const isISODate = (d) => typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d) && !isNaN(new Date(d + "T00:00:00"));
+const cleanTx = (t) => (t && typeof t === "object" && isISODate(t.date) && Number.isFinite(+t.amount) && +t.amount > 0 ? {
+  ...t, id: String(t.id || uid()), date: t.date, type: t.type === "income" ? "income" : "expense",
+  category: String(t.category || "其他支出"), amount: +t.amount, note: String(t.note ?? ""), cardId: String(t.cardId ?? ""),
+} : null);
+// ===== 捷徑自動記帳 =====
+// 依商店名稱猜分類：先看你上次同一家店記成什麼，沒有再用下面的關鍵字表（有問題直接改這張表）
+const CAT_RULES = [
+  ["餐飲", ["全家", "7-11", "7-ELEVEN", "統一超商", "萊爾富", "OK超商", "OK mart", "麥當勞", "肯德基", "摩斯", "漢堡王", "星巴克", "路易莎", "cama", "85度C", "Uber Eats", "foodpanda", "餐", "麵", "飯", "咖啡", "早餐", "鍋", "食", "壽司", "拉麵", "茶", "飲", "Steak", "牛排", "Restaurant", "餐廳", "Cafe", "Coffee", "Bakery", "麵包", "Pizza", "Burger"]],
+  ["交通", ["中油", "台塑石化", "加油", "高鐵", "Taiwan High Sp", "THSR", "台鐵", "臺鐵", "捷運", "Parking", "Taxi", "悠遊卡", "一卡通", "Uber", "yoxi", "計程車", "大都會", "停車", "uTagGo", "遠通", "iRent", "GoShare", "WeMo"]],
+  ["通訊", ["中華電信", "台灣大哥大", "遠傳", "台灣之星", "亞太電信"]],
+  ["住宿", ["飯店", "旅館", "酒店", "Hotel", "Agoda", "Booking", "民宿", "Airbnb"]],
+  ["設備耗材", ["特力屋", "五金", "燦坤", "全國電子", "順發", "大同3C", "電子股份", "電子材料"]],
+  ["辦公", ["文具", "誠品", "金石堂", "影印"]],
+];
+const normTxt = (x) => String(x || "").toLowerCase().replace(/\s+/g, "");
+function guessCategory(merchant, transactions) {
+  const m = normTxt(merchant);
+  if (m) {
+    const past = transactions.filter((t) => t.type === "expense" && normTxt(t.note) === m && CATEGORIES.expense.includes(t.category))
+      .sort((a, b) => b.date.localeCompare(a.date))[0];
+    if (past) return { category: past.category, by: "上次同一家店" };
+    for (const [cat, words] of CAT_RULES) if (words.some((w) => m.includes(normTxt(w)))) return { category: cat, by: "商店名稱" };
+  }
+  return { category: "其他支出", by: "預設" };
+}
+function matchCard(text, cards) {
+  const q = normTxt(text);
+  if (!q) return "";
+  let c = cards.find((x) => { const n = normTxt(x.name); return n && (n.includes(q) || q.includes(n)); });
+  if (!c) { // 錢包給的是銀行名（例：台新銀行），去掉「銀行、商業銀行、卡」再比一次
+    const bank = q.replace(/(商業)?銀行|bank|信用卡|金融卡|卡$/g, "");
+    if (bank.length >= 2) c = cards.find((x) => normTxt(x.name).includes(bank));
+  }
+  return c ? c.id : "";
+}
+// 解析網址 # 後面的資料：#add&k=金鑰&amt=金額&m=商店&card=卡片
+function parseShortcutLink(hash) {
+  const p = new URLSearchParams(String(hash || "").replace(/^#/, ""));
+  if (!p.has("add")) return null;
+  const raw = String(p.get("amt") || "").replace(/[,，\s]|NT\$|TWD|\$|元/gi, "");
+  let amount = /^\d+(\.\d+)?$/.test(raw) ? Math.round(parseFloat(raw) * 100) / 100 : 0;
+  if (!(amount >= 1 && amount <= 9999999)) amount = 0; // 超出範圍就不帶金額，讓你自己輸入
+  const merchant = String(p.get("m") || "").replace(/[\u0000-\u001f\u007f<>]/g, "")
+    .replace(/[,，]\s*[^,，]{1,4}[市縣][^,，]{1,5}[區鄉鎮市]\s*$/, "").trim().slice(0, 60);
+  const card = String(p.get("card") || "").slice(0, 30);
+  // 刷卡日期：接受 2026-10-22 或通知裡的 10/22（自動補年份，跨年時算去年）
+  let date = "";
+  const d = String(p.get("d") || "").trim();
+  const md = d.match(/^(\d{1,2})\/(\d{1,2})$/);
+  if (md) {
+    const now = new Date(); let y = now.getFullYear();
+    if (+md[1] > now.getMonth() + 1) y -= 1;
+    date = `${y}-${md[1].padStart(2, "0")}-${md[2].padStart(2, "0")}`;
+  } else date = d;
+  if (!isISODate(date) || date > todayISO()) date = "";
+  return { key: String(p.get("k") || ""), amount, merchant, card, date };
+}
+function genKey() {
+  const b = new Uint8Array(18);
+  crypto.getRandomValues(b);
+  return btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+// 防重複：記錄最近 10 分鐘「帶入過／記下過」的金額與日期，Safari 不同分頁之間共用
+const RECENT_KEY = "ledger:recentLinks";
+function recentLinks() {
+  try {
+    const now = Date.now();
+    return (JSON.parse(localStorage.getItem(RECENT_KEY)) || []).filter((r) => now - r.at < 10 * 60 * 1000);
+  } catch { return []; }
+}
+function logRecent(entry) {
+  try { localStorage.setItem(RECENT_KEY, JSON.stringify([...recentLinks(), { ...entry, at: Date.now() }].slice(-30))); } catch { /* 無法寫入就略過 */ }
+}
+const sameTx = (a, b) => a.date === b.date && Math.abs(a.amount - b.amount) < 0.01;
+const minsAgo = (at) => Math.max(1, Math.round((Date.now() - at) / 60000));
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch { /* 改用舊方法 */ }
+  try {
+    const ta = document.createElement("textarea"); ta.value = text; ta.setAttribute("readonly", "");
+    ta.style.position = "fixed"; ta.style.opacity = "0"; document.body.appendChild(ta); ta.select();
+    const ok = document.execCommand("copy"); document.body.removeChild(ta); return ok;
+  } catch { return false; }
+}
+
 const prevMonthKey = (m) => { let [y, mm] = m.split("-").map(Number); mm--; if (mm === 0) { mm = 12; y--; } return y + "-" + String(mm).padStart(2, "0"); };
 
 
 // ---------- Storage：本機快取 + Firestore 雲端（雲端優先）----------
-const KEYS = { tx: "transactions", bd: "budgets", tr: "trips", cd: "cards", ov: "overseas" };
+const KEYS = { tx: "transactions", bd: "budgets", tr: "trips", cd: "cards", ov: "overseas", st: "settings" };
 const cacheKey = (uid, key) => `ledger:${uid}:${key}`;
 // 本機快取讀寫（依 uid 分開，換帳號不會混）
 function cacheLoad(uid, key, fallback) {
@@ -156,6 +243,7 @@ function LedgerApp({ user }) {
   const [trips, setTrips] = useState(() => cacheLoad(uid, KEYS.tr, []));
   const [cards, setCards] = useState(() => cacheLoad(uid, KEYS.cd, []));
   const [overseas, setOverseas] = useState(() => cacheLoad(uid, KEYS.ov, []));
+  const [settings, setSettings] = useState(() => cacheLoad(uid, KEYS.st, {}));
   const [month, setMonth] = useState(monthKey(todayISO()));
   const [syncing, setSyncing] = useState(true);
   const [quick, setQuick] = useState(null); // 記一筆面板：{ type, category }
@@ -168,10 +256,10 @@ function LedgerApp({ user }) {
     let alive = true;
     setSyncing(true);
     (async () => {
-      const [tx, bd, tr, cd, ov] = await Promise.all([
+      const [tx, bd, tr, cd, ov, st] = await Promise.all([
         cloudLoad(uid, KEYS.tx, null), cloudLoad(uid, KEYS.bd, null),
         cloudLoad(uid, KEYS.tr, null), cloudLoad(uid, KEYS.cd, null),
-        cloudLoad(uid, KEYS.ov, null),
+        cloudLoad(uid, KEYS.ov, null), cloudLoad(uid, KEYS.st, null),
       ]);
       if (!alive) return;
       if (tx !== null) setTransactions(tx);
@@ -179,6 +267,7 @@ function LedgerApp({ user }) {
       if (tr !== null) setTrips(tr);
       if (cd !== null) setCards(cd);
       if (ov !== null) setOverseas(ov);
+      if (st !== null) setSettings(st);
       ready.current = true;
       setSyncing(false);
     })();
@@ -191,6 +280,7 @@ function LedgerApp({ user }) {
   useEffect(() => { if (!ready.current) return; cacheSave(uid, KEYS.tr, trips); cloudSave(uid, KEYS.tr, trips); }, [trips, uid]);
   useEffect(() => { if (!ready.current) return; cacheSave(uid, KEYS.cd, cards); cloudSave(uid, KEYS.cd, cards); }, [cards, uid]);
   useEffect(() => { if (!ready.current) return; cacheSave(uid, KEYS.ov, overseas); cloudSave(uid, KEYS.ov, overseas); }, [overseas, uid]);
+  useEffect(() => { if (!ready.current) return; cacheSave(uid, KEYS.st, settings); cloudSave(uid, KEYS.st, settings); }, [settings, uid]);
 
   const months = useMemo(() => {
     const set = new Set(transactions.map((t) => monthKey(t.date)));
@@ -204,15 +294,57 @@ function LedgerApp({ user }) {
   }, [months, month]);
 
   const goto = (t) => { setTab(t); window.scrollTo(0, 0); };
+  const notify = (msg, ms = 2400) => {
+    setToast(msg);
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(""), ms);
+  };
   const saveQuick = (tx) => {
     setTransactions((p) => [tx, ...p]);
     setQuick(null);
     setMonth(monthKey(tx.date));
-    setToast(`已記下 ${tx.category} ${num(tx.amount)}`);
-    clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(""), 2400);
+    notify(`已記下 ${tx.category} ${num(tx.amount)}`);
   };
-  const navActive = ["cards", "travel", "overseas"].includes(tab) ? "more" : tab;
+
+  // 捷徑連結：讀到 #add 就先記下來，並立刻把網址清乾淨（金鑰與金額不留在網址列）
+  const [pendingLink, setPendingLink] = useState(null);
+  useEffect(() => {
+    const grab = () => {
+      if (!location.hash.startsWith("#add")) return;
+      setPendingLink(location.hash);
+      history.replaceState(null, "", location.pathname + location.search);
+    };
+    grab();
+    window.addEventListener("hashchange", grab);
+    return () => window.removeEventListener("hashchange", grab);
+  }, []);
+  const openFromLink = (link, { skipKey = false } = {}) => {
+    if (!link) return;
+    if (!skipKey) {
+      if (!settings.shortcutKey) { notify("還沒設定捷徑金鑰，請到「更多 → 捷徑自動記帳」產生", 4000); return; }
+      if (link.key !== settings.shortcutKey) { notify("連結的金鑰不符，已忽略這筆資料", 4000); return; }
+    }
+    const g = guessCategory(link.merchant, transactions);
+    const day = link.date || todayISO();
+    const me = { date: day, amount: link.amount };
+    let dupNote = "";
+    if (link.amount) {
+      const saved = transactions.find((t) => t.type === "expense" && sameTx(t, me));
+      const recent = recentLinks().filter((r) => sameTx(r, me)).pop();
+      if (saved) dupNote = `${+day.slice(5, 7)}/${+day.slice(8)} 已經有一筆 ${num(saved.amount)}（${saved.note || saved.category}），可能重複，確認不是同一筆再記下`;
+      else if (recent) dupNote = `${minsAgo(recent.at)} 分鐘內另一則通知也帶入了 ${num(link.amount)}${recent.note ? `（${recent.note}）` : ""}，多半是同一筆（Apple Pay 和銀行 App 都會通知）。只記其中一筆，另一個按關閉`;
+      logRecent({ ...me, note: link.merchant, kind: "open" });
+    }
+    setQuick({ dupNote, type: "expense", category: g.category, guessBy: g.by, amount: link.amount, note: link.merchant, date: link.date,
+      cardId: matchCard(link.card, cards), cardText: link.card, src: "notify", fromLink: true });
+  };
+  useEffect(() => {
+    if (!pendingLink || syncing) return; // 等雲端設定載入完才比對金鑰
+    openFromLink(parseShortcutLink(pendingLink));
+    setPendingLink(null);
+  }, [pendingLink, syncing]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const navActive = ["cards", "travel", "overseas", "shortcut"].includes(tab) ? "more" : tab;
 
   return (
     <div className="app">
@@ -237,10 +369,12 @@ function LedgerApp({ user }) {
         {tab === "reports" && <Reports transactions={transactions} trips={trips} month={month} cards={cards} budgets={budgets} overseas={overseas} setOverseas={setOverseas}
           setTransactions={setTransactions} setTrips={setTrips} setCards={setCards} setBudgets={setBudgets} />}
         {tab === "budget" && <Budget budgets={budgets} setBudgets={setBudgets} transactions={transactions} month={month} />}
-        {tab === "more" && <More user={user} cards={cards} trips={trips} overseas={overseas} transactions={transactions} month={month} goto={goto} />}
+        {tab === "more" && <More user={user} cards={cards} trips={trips} overseas={overseas} transactions={transactions} month={month} goto={goto} settings={settings} />}
         {tab === "cards" && <div className="stack"><SubHead title="信用卡" goto={goto} /><Cards cards={cards} setCards={setCards} transactions={transactions} month={month} /></div>}
         {tab === "travel" && <div className="stack"><SubHead title="差旅代墊" goto={goto} /><Travel trips={trips} setTrips={setTrips} setTransactions={setTransactions} /></div>}
         {tab === "overseas" && <div className="stack"><SubHead title="出國消費" goto={goto} /><Overseas overseas={overseas} setOverseas={setOverseas} cards={cards} setTransactions={setTransactions} /></div>}
+        {tab === "shortcut" && <div className="stack"><SubHead title="捷徑自動記帳" goto={goto} /><ShortcutSettings settings={settings} setSettings={setSettings} cards={cards} notify={notify}
+          onTest={() => openFromLink({ key: "", amount: 120, merchant: "全家便利商店（測試）", card: cards[0]?.name || "" }, { skipKey: true })} /></div>}
       </main>
 
       <nav className="bnav" aria-label="主選單">
@@ -258,8 +392,69 @@ function LedgerApp({ user }) {
   );
 }
 
+// ---------- 捷徑自動記帳設定 ----------
+function ShortcutSettings({ settings, setSettings, cards, notify, onTest }) {
+  const [show, setShow] = useState(false);
+  const key = settings.shortcutKey || "";
+  const base = `${location.origin}${location.pathname}#add&k=${key}`;
+  const masked = key ? "•".repeat(Math.max(0, key.length - 4)) + key.slice(-4) : "";
+  const create = () => {
+    if (key && !window.confirm("重新產生後，舊的金鑰立刻失效，手機上的捷徑要換成新的網址才能用。確定嗎？")) return;
+    setSettings((p) => ({ ...p, shortcutKey: genKey(), keyCreatedAt: new Date().toISOString() }));
+    notify(key ? "已產生新金鑰，記得更新捷徑" : "已產生金鑰");
+  };
+  const copy = async (text, label) => notify((await copyText(text)) ? `已複製${label}` : "複製失敗，請長按文字手動複製");
+  return (
+    <>
+      <div className="card">
+        <div className="hint" style={{ marginTop: 0, lineHeight: 1.8 }}>
+          搭配 iPhone 捷徑（iOS 27）的「通知」自動化：收到刷卡通知時，捷徑在手機上抓出金額、商店與卡別，再打開這個網頁並自動填好。
+          <b style={{ color: "#F2EEE6" }}>每一筆都要你按「記下」才會存，</b>不會自動入帳。
+        </div>
+      </div>
+
+      <section className="panel">
+        <div className="panel-head"><h2>捷徑金鑰</h2></div>
+        {key ? (
+          <>
+            <div className="key-box mono">{show ? key : masked}</div>
+            <div className="csv3">
+              <button className="soft-btn" onClick={() => setShow((v) => !v)}>{show ? <EyeOff size={15} /> : <Eye size={15} />}{show ? "隱藏" : "顯示"}</button>
+              <button className="soft-btn" onClick={() => copy(key, "金鑰")}><Copy size={15} />複製</button>
+              <button className="danger-btn" onClick={create}><RefreshCw size={15} />換新</button>
+            </div>
+            <div className="hint" style={{ marginTop: 0 }}>網址裡的金鑰對不上時，網頁會直接忽略，別人傳來的假連結無法塞資料。金鑰外流時按「換新」。</div>
+          </>
+        ) : (
+          <>
+            <div className="hint" style={{ marginTop: 0 }}>先產生一組金鑰，捷徑每次打開網頁都要帶著它。</div>
+            <button className="gold-btn" onClick={create}><Zap size={17} />產生金鑰</button>
+          </>
+        )}
+      </section>
+
+      {key && (
+        <section className="panel">
+          <div className="panel-head"><h2>捷徑要用的網址開頭</h2></div>
+          <div className="key-box small mono">{show ? base : base.replace(key, masked)}</div>
+          <button className="soft-btn full" onClick={() => copy(base, "網址開頭")}><Copy size={15} />複製網址開頭</button>
+          <div className="hint" style={{ marginTop: 0, lineHeight: 1.8 }}>
+            捷徑會在後面接上 <span className="mono">&amp;amt=金額&amp;m=商店&amp;card=卡片</span>。這段網址含金鑰，只貼進你自己的捷徑，不要傳給別人。
+          </div>
+        </section>
+      )}
+
+      <section className="panel">
+        <div className="panel-head"><h2>試試看</h2></div>
+        <div className="hint" style={{ marginTop: 0 }}>模擬一筆「全家便利商店 120 元」{cards[0] ? `，用 ${cards[0].name}` : ""}，看看帶入後的畫面。按關閉就不會記帳。</div>
+        <button className="soft-btn full" onClick={onTest}><Zap size={15} />模擬一筆捷徑帶入</button>
+      </section>
+    </>
+  );
+}
+
 // ---------- 更多 ----------
-function More({ user, cards, trips, overseas, transactions, month, goto }) {
+function More({ user, cards, trips, overseas, transactions, month, goto, settings }) {
   const mtx = transactions.filter((t) => monthKey(t.date) === month);
   const rebate = mtx.reduce((s, t) => s + rebateOf(t, cards), 0);
   const pend = trips.filter((t) => !t.reimbursed && t.items.length > 0);
@@ -268,6 +463,7 @@ function More({ user, cards, trips, overseas, transactions, month, goto }) {
     { id: "cards", Icon: CreditCard, color: "#B99AD6", title: "信用卡", sub: cards.length ? `${cards.length} 張卡，本月回饋 ${num(rebate)}` : "新增卡片與回饋率" },
     { id: "travel", Icon: Plane, color: "#E0A458", title: "差旅代墊", sub: pend.length ? `${pend.length} 趟待報帳，共 ${num(pendAmt)}` : `${trips.length} 趟行程` },
     { id: "overseas", Icon: Globe, color: "#7FCAD4", title: "出國消費", sub: overseas.length ? `${overseas.length} 趟旅程` : "建立旅程，即時匯率換算" },
+    { id: "shortcut", Icon: Zap, color: "#8FD3AE", title: "捷徑自動記帳", sub: settings.shortcutKey ? "已設定金鑰，收到刷卡通知自動帶入" : "用 iPhone 捷徑讀取刷卡通知" },
   ];
   return (
     <div className="stack">
@@ -388,10 +584,13 @@ const KEYS_PAD = ["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0", "del"];
 function QuickAdd({ init, cards, budgets, transactions, onSave, onClose }) {
   const [type, setType] = useState(init.type || "expense");
   const [category, setCategory] = useState(init.category || CATEGORIES[init.type || "expense"][0]);
-  const [amt, setAmt] = useState("");
-  const [cardId, setCardId] = useState(() => { try { return localStorage.getItem("ledger:lastCard") || ""; } catch { return ""; } });
-  const [note, setNote] = useState("");
-  const [date, setDate] = useState(todayISO());
+  const [amt, setAmt] = useState(init.amount ? String(init.amount) : "");
+  const [cardId, setCardId] = useState(() => {
+    if (init.fromLink) return init.cardId || ""; // 捷徑帶入：只用對到的卡，對不到就留空
+    try { return localStorage.getItem("ledger:lastCard") || ""; } catch { return ""; }
+  });
+  const [note, setNote] = useState(init.note || "");
+  const [date, setDate] = useState(init.date || todayISO());
 
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -422,9 +621,17 @@ function QuickAdd({ init, cards, budgets, transactions, onSave, onClose }) {
   const switchType = (tp) => { if (tp === type) return; setType(tp); setCategory(CATEGORIES[tp][0]); };
   const save = () => {
     if (n <= 0) return;
+    if (init.fromLink && type === "expense") {
+      const me = { date, amount: n };
+      const savedHere = transactions.find((t) => t.type === "expense" && sameTx(t, me));
+      const savedElsewhere = recentLinks().filter((r) => r.kind === "saved" && sameTx(r, me)).pop();
+      const hit = savedHere || savedElsewhere;
+      if (hit && !window.confirm(`${+date.slice(5, 7)}/${+date.slice(8)} 已經記過一筆 ${num(n)}${hit.note ? `（${hit.note}）` : ""}。\n確定這是另一筆、還要再記一次嗎？`)) return;
+      logRecent({ ...me, note: note.trim(), kind: "saved" });
+    }
     const cid = type === "expense" ? validCard : "";
     try { if (type === "expense") localStorage.setItem("ledger:lastCard", cid); } catch { /* 無痕模式可能無法寫入 */ }
-    onSave({ id: uid(), date, type, category, amount: n, note: note.trim(), cardId: cid });
+    onSave({ id: uid(), date, type, category, amount: n, note: note.trim(), cardId: cid, ...(init.src ? { src: init.src } : {}) });
   };
 
   const parts = (amt === "" ? "0" : amt).split(".");
@@ -443,6 +650,16 @@ function QuickAdd({ init, cards, budgets, transactions, onSave, onClose }) {
           <input className="date-pill" type="date" value={date} onChange={(e) => setDate(e.target.value || todayISO())} aria-label="日期" />
         </header>
 
+        {init.dupNote && <div className="link-banner warn"><AlertTriangle size={16} /><span><b>可能重複記帳</b><small>{init.dupNote}</small></span></div>}
+        {init.fromLink && (
+          <div className="link-banner">
+            <Zap size={16} />
+            <span>
+              <b>來自捷徑自動帶入，請確認後再記下</b>
+              <small>{init.note ? `分類依${init.guessBy}猜測` : "通知裡沒有商店名稱，請選分類"}{init.cardText && !init.cardId ? `；卡片「${init.cardText}」沒有對應到你設定的卡，請手動選擇` : ""}{!init.amount ? "；沒有抓到金額，請自己輸入" : ""}</small>
+            </span>
+          </div>
+        )}
         <div className="cat-scroll">
           {CATEGORIES[type].map((c) => {
             const s = catStyle(c); const on = c === category;
@@ -523,7 +740,8 @@ function Ledger({ transactions, setTransactions, month, cards }) {
         if (c.length < 3) return;
         const amt = parseFloat(c[3] || c[2]);
         if (isNaN(amt)) return;
-        rows.push({ id: uid(), date: c[0] || todayISO(), type: /收|income|\+/i.test(c[1]) ? "income" : "expense", category: c[2] || "其他支出", amount: Math.abs(amt), note: c[4] || "", cardId: "" });
+        if (!isISODate(c[0])) return; // 日期格式不對（應為 2026-10-02）就略過
+        rows.push({ id: uid(), date: c[0], type: /收|income|\+/i.test(c[1]) ? "income" : "expense", category: c[2] || "其他支出", amount: Math.abs(amt), note: c[4] || "", cardId: "" });
       });
       if (rows.length) setTransactions((p) => [...rows, ...p]);
       setMsg(rows.length ? `已匯入 ${rows.length} 筆` : "沒有讀到可匯入的資料，請確認 CSV 格式");
@@ -612,7 +830,7 @@ function Ledger({ transactions, setTransactions, month, cards }) {
                 return (
                   <button key={t.id} className="tx" onClick={() => startEdit(t)} aria-label={`${t.category} ${num(t.amount)}，點擊修改`}>
                     <span className="tx-ico" style={{ background: s.bg, color: s.fg }}><s.Icon size={18} /></span>
-                    <span className="tx-txt"><b>{t.note || t.category}</b><small>{t.type === "expense" ? (t.note ? `${t.category}，${cn || "現金"}` : (cn || "現金")) : (t.note ? t.category : "收入")}</small></span>
+                    <span className="tx-txt"><b>{t.note || t.category}{t.src === "notify" && <em className="src-tag">自動</em>}</b><small>{t.type === "expense" ? (t.note ? `${t.category}，${cn || "現金"}` : (cn || "現金")) : (t.note ? t.category : "收入")}</small></span>
                     <span className="tx-val">
                       <b className={t.type}>{t.type === "income" ? "+" : "−"}{num(t.amount)}</b>
                       {reb > 0 && <small>回饋 {num(reb)}</small>}
@@ -1144,7 +1362,7 @@ function Reports({ transactions, trips, month, cards, budgets, overseas, setOver
         if (!data || typeof data !== "object" || (!Array.isArray(data.transactions) && !Array.isArray(data.trips) && !Array.isArray(data.cards))) {
           throw new Error("檔案格式不符，這似乎不是本 App 匯出的備份");
         }
-        const inTx = Array.isArray(data.transactions) ? data.transactions : [];
+        const inTx = (Array.isArray(data.transactions) ? data.transactions : []).map(cleanTx).filter(Boolean);
         const inTr = Array.isArray(data.trips) ? data.trips : [];
         const inCd = Array.isArray(data.cards) ? data.cards : [];
         const inOv = Array.isArray(data.overseas) ? data.overseas : [];
@@ -1181,7 +1399,9 @@ function Reports({ transactions, trips, month, cards, budgets, overseas, setOver
   };
 
   const exportCSV = (rows, filename) => {
-    const csv = rows.map((r) => r.map((c) => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\r\n");
+    // 文字欄開頭是 = + - @ 時加上 ' ，避免 Excel 當成公式執行；純數字保持原樣
+    const safe = (c) => { const v = String(c ?? ""); return typeof c !== "number" && /^[=+\-@\t\r]/.test(v) ? "'" + v : v; };
+    const csv = rows.map((r) => r.map((c) => `"${safe(c).replace(/"/g, '""')}"`).join(",")).join("\r\n");
     const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url; a.download = filename; a.click(); URL.revokeObjectURL(url);
