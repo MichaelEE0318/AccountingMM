@@ -423,3 +423,5 @@ em.good { color: var(--good); } em.bad { color: var(--exp); } em.flat { color: v
 .key-box.small { font-size: 12px; line-height: 1.6; color: var(--muted); letter-spacing: 0; }
 .link-banner.warn { background: rgba(242,164,142,0.1); border-color: rgba(242,164,142,0.35); color: var(--exp); }
 .link-banner.warn b { color: #F6C3B4; }
+.src-tag.warn { color: #F2A48E; background: rgba(242,164,142,0.12); }
+.soft-btn:disabled { opacity: .55; }

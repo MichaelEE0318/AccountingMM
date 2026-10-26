@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { login, logout, watchAuth, cloudLoad, cloudSave } from "./firebase";
 import { buildMonthlyReport } from "./monthlyReport";
+import { watchInbox, removeInbox, inboxEndpoint } from "./inbox";
 
 // ---------- Constants ----------
 const CATEGORIES = {
@@ -105,19 +106,33 @@ function matchCard(text, cards) {
   if (!c) { // 錢包給的是銀行名（例：台新銀行），去掉「銀行、商業銀行、卡」再比一次
     const bank = q.replace(/(商業)?銀行|bank|信用卡|金融卡|卡$/g, "");
     if (bank.length >= 2) c = cards.find((x) => normTxt(x.name).includes(bank));
+    // 再退一步：全名（國泰世華商業銀行）對卡片簡稱（國泰 CUBE），比前兩個字
+    if (!c && bank.length >= 2 && /^[一-鿿]{2}/.test(bank)) c = cards.find((x) => normTxt(x.name).startsWith(bank.slice(0, 2)));
   }
   return c ? c.id : "";
 }
 // 解析網址 # 後面的資料：#add&k=金鑰&amt=金額&m=商店&card=卡片
+// 金額：去掉 NT$、逗號、元；只收 1 ~ 9,999,999，其他回 0
+function cleanAmount(v) {
+  const raw = String(v ?? "").replace(/[,，\s]|NT\$|TWD|\$|元/gi, "");
+  const amount = /^\d+(\.\d+)?$/.test(raw) ? Math.round(parseFloat(raw) * 100) / 100 : 0;
+  return amount >= 1 && amount <= 9999999 ? amount : 0;
+}
+// 商店名：去掉控制字元與 < >，以及錢包附帶的「, 台北市大安區」
+const cleanMerchant = (v) => String(v ?? "").replace(/[\u0000-\u001f\u007f<>]/g, "")
+  .replace(/[,，]\s*[^,，]{1,4}[市縣][^,，]{1,5}[區鄉鎮市]\s*$/, "").trim().slice(0, 60);
+const cleanCardText = (v) => String(v ?? "").replace(/[\u0000-\u001f\u007f<>]/g, "").trim().slice(0, 30);
+// 收件匣的文字是捷徑先做過 URL 編碼的（避免商店名裡的引號弄壞 JSON），這裡解回來
+function decodeSafe(v) {
+  const s = String(v ?? "");
+  try { return decodeURIComponent(s.replace(/\+/g, "%20")); } catch { return s; }
+}
 function parseShortcutLink(hash) {
   const p = new URLSearchParams(String(hash || "").replace(/^#/, ""));
   if (!p.has("add")) return null;
-  const raw = String(p.get("amt") || "").replace(/[,，\s]|NT\$|TWD|\$|元/gi, "");
-  let amount = /^\d+(\.\d+)?$/.test(raw) ? Math.round(parseFloat(raw) * 100) / 100 : 0;
-  if (!(amount >= 1 && amount <= 9999999)) amount = 0; // 超出範圍就不帶金額，讓你自己輸入
-  const merchant = String(p.get("m") || "").replace(/[\u0000-\u001f\u007f<>]/g, "")
-    .replace(/[,，]\s*[^,，]{1,4}[市縣][^,，]{1,5}[區鄉鎮市]\s*$/, "").trim().slice(0, 60);
-  const card = String(p.get("card") || "").slice(0, 30);
+  const amount = cleanAmount(p.get("amt")); // 超出範圍就不帶金額，讓你自己輸入
+  const merchant = cleanMerchant(p.get("m"));
+  const card = cleanCardText(p.get("card"));
   // 刷卡日期：接受 2026-10-22 或通知裡的 10/22（自動補年份，跨年時算去年）
   let date = "";
   const d = String(p.get("d") || "").trim();
@@ -148,6 +163,30 @@ function logRecent(entry) {
 }
 const sameTx = (a, b) => a.date === b.date && Math.abs(a.amount - b.amount) < 0.01;
 const minsAgo = (at) => Math.max(1, Math.round((Date.now() - at) / 60000));
+const localISO = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const hhmm = (d) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+
+// 收件匣一筆 → 明細一筆。回傳 { kind: "tx" | "ping" | "bad", tx?, merchant? }
+// 日期用「付款當下」捷徑送出的時間（伺服器已檢查過在 10 分鐘內），不是你打開網頁的時間
+function inboxToTx(item, existing, cards) {
+  const merchant = cleanMerchant(decodeSafe(item.m));
+  const cardText = cleanCardText(decodeSafe(item.card));
+  const amount = cleanAmount(item.amt);
+  if (!amount) return { kind: !merchant && !String(item.amt ?? "").trim() ? "ping" : "bad", merchant };
+  const at = item.at && typeof item.at.toDate === "function" ? item.at.toDate() : new Date();
+  const date = localISO(at);
+  const g = guessCategory(merchant, existing);
+  const me = { date, amount };
+  const dupOf = existing.find((t) => t.type === "expense" && sameTx(t, me));
+  return {
+    kind: "tx",
+    tx: {
+      id: "ib_" + item.id, date, type: "expense", category: g.category, amount, note: merchant,
+      cardId: matchCard(cardText, cards), src: "notify", paidAt: `${date} ${hhmm(at)}`,
+      ...(dupOf ? { dup: true } : {}),
+    },
+  };
+}
 
 async function copyText(text) {
   try { await navigator.clipboard.writeText(text); return true; } catch { /* 改用舊方法 */ }
@@ -344,6 +383,58 @@ function LedgerApp({ user }) {
     setPendingLink(null);
   }, [pendingLink, syncing]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 收件匣：捷徑在背景投遞的交易。網頁開著就即時監聽，一到就搬進明細，
+  // 先確定明細已寫回雲端，才刪掉收件匣那筆（中途斷線也不會掉資料，下次打開會再搬一次，靠 id 去重）
+  const txRef = useRef(transactions);
+  txRef.current = transactions;
+  const cardsRef = useRef(cards);
+  cardsRef.current = cards;
+  const inboxBusy = useRef(false);
+  const inboxQueue = useRef(null);
+  const [inboxErr, setInboxErr] = useState("");
+  useEffect(() => {
+    if (syncing) return;
+    const handle = async (items) => {
+      if (inboxBusy.current) { inboxQueue.current = items; return; }
+      inboxBusy.current = true;
+      try {
+        let list = txRef.current;
+        const added = [], done = [];
+        let pings = 0, bad = 0, dups = 0;
+        for (const it of [...items].sort((a, b) => (a.at?.seconds || 0) - (b.at?.seconds || 0))) {
+          if (list.some((t) => t.id === "ib_" + it.id)) { done.push(it.id); continue; } // 已經搬過，只差刪除
+          const r = inboxToTx(it, list, cardsRef.current);
+          if (r.kind === "tx") { list = [r.tx, ...list]; added.push(r.tx); if (r.tx.dup) dups++; }
+          else if (r.kind === "ping") pings++;
+          else bad++;
+          done.push(it.id);
+        }
+        if (added.length) {
+          const ok = await cloudSave(uid, KEYS.tx, list);
+          if (!ok) { notify("收件匣搬移失敗（雲端寫入沒成功），下次打開會再試", 4000); return; }
+          // 合併進「目前」的明細（等雲端那幾百毫秒內你若剛好手動記了一筆，也不會被蓋掉）
+          setTransactions((p) => { const ids = new Set(p.map((t) => t.id)); return [...added.filter((t) => !ids.has(t.id)).reverse(), ...p]; });
+        }
+        await Promise.all(done.map((id) => removeInbox(uid, id).catch((e) => console.error("刪除收件匣失敗", id, e))));
+        const msg = [];
+        if (added.length) msg.push(`已從收件匣記下 ${added.length} 筆${added.length === 1 ? `：${added[0].note || added[0].category} ${num(added[0].amount)}` : ""}`);
+        if (dups) msg.push(`${dups} 筆可能重複，到明細確認`);
+        if (bad) msg.push(`${bad} 筆金額無法辨識，已略過`);
+        if (pings && !added.length) msg.push("收到捷徑的測試投遞，連線正常");
+        if (msg.length) notify(msg.join("；"), 4500);
+        if (added.length) setMonth(monthKey(added[added.length - 1].date));
+      } finally {
+        inboxBusy.current = false;
+        const next = inboxQueue.current;
+        inboxQueue.current = null;
+        if (next) handle(next);
+      }
+    };
+    const stop = watchInbox(uid, (items) => { setInboxErr(""); if (items.length) handle(items); },
+      (e) => { console.error("收件匣監聽失敗", e); setInboxErr(e?.code || "error"); });
+    return stop;
+  }, [uid, syncing]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const navActive = ["cards", "travel", "overseas", "shortcut"].includes(tab) ? "more" : tab;
 
   return (
@@ -373,7 +464,7 @@ function LedgerApp({ user }) {
         {tab === "cards" && <div className="stack"><SubHead title="信用卡" goto={goto} /><Cards cards={cards} setCards={setCards} transactions={transactions} month={month} /></div>}
         {tab === "travel" && <div className="stack"><SubHead title="差旅代墊" goto={goto} /><Travel trips={trips} setTrips={setTrips} setTransactions={setTransactions} /></div>}
         {tab === "overseas" && <div className="stack"><SubHead title="出國消費" goto={goto} /><Overseas overseas={overseas} setOverseas={setOverseas} cards={cards} setTransactions={setTransactions} /></div>}
-        {tab === "shortcut" && <div className="stack"><SubHead title="捷徑自動記帳" goto={goto} /><ShortcutSettings settings={settings} setSettings={setSettings} cards={cards} notify={notify}
+        {tab === "shortcut" && <div className="stack"><SubHead title="捷徑自動記帳" goto={goto} /><ShortcutSettings uid={uid} inboxErr={inboxErr} settings={settings} setSettings={setSettings} cards={cards} notify={notify}
           onTest={() => openFromLink({ key: "", amount: 120, merchant: "全家便利商店（測試）", card: cards[0]?.name || "" }, { skipKey: true })} /></div>}
       </main>
 
@@ -393,11 +484,27 @@ function LedgerApp({ user }) {
 }
 
 // ---------- 捷徑自動記帳設定 ----------
-function ShortcutSettings({ settings, setSettings, cards, notify, onTest }) {
+function inboxTemplate(key) {
+  return `{"fields":{"k":{"stringValue":"${key}"},"amt":{"stringValue":"〔數量〕"},"m":{"stringValue":"〔URL 編碼商家〕"},"card":{"stringValue":"〔URL 編碼卡片〕"},"at":{"timestampValue":"〔格式化的日期〕"}}}`;
+}
+function ShortcutSettings({ uid, settings, setSettings, cards, notify, onTest, inboxErr }) {
   const [show, setShow] = useState(false);
+  const [pinging, setPinging] = useState(false);
   const key = settings.shortcutKey || "";
   const base = `${location.origin}${location.pathname}#add&k=${key}`;
   const masked = key ? "•".repeat(Math.max(0, key.length - 4)) + key.slice(-4) : "";
+  const endpoint = inboxEndpoint(uid);
+  const tpl = inboxTemplate(key);
+  // 從網頁模擬捷徑送一筆「空白測試」，走跟捷徑完全一樣的路（不登入、靠金鑰、經過安全規則）
+  const ping = async () => {
+    setPinging(true);
+    try {
+      const body = { fields: { k: { stringValue: key }, amt: { stringValue: "" }, at: { timestampValue: new Date().toISOString() } } };
+      const r = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), credentials: "omit" });
+      if (!r.ok) notify(r.status === 403 ? "被安全規則擋下：確認 Firebase 規則已更新，且金鑰已同步到雲端" : `投遞失敗（${r.status}）`, 5000);
+    } catch { notify("連不上 Firestore，檢查網路", 4000); }
+    setPinging(false);
+  };
   const create = () => {
     if (key && !window.confirm("重新產生後，舊的金鑰立刻失效，手機上的捷徑要換成新的網址才能用。確定嗎？")) return;
     setSettings((p) => ({ ...p, shortcutKey: genKey(), keyCreatedAt: new Date().toISOString() }));
@@ -408,8 +515,9 @@ function ShortcutSettings({ settings, setSettings, cards, notify, onTest }) {
     <>
       <div className="card">
         <div className="hint" style={{ marginTop: 0, lineHeight: 1.8 }}>
-          搭配 iPhone 捷徑（iOS 27）的「通知」自動化：收到刷卡通知時，捷徑在手機上抓出金額、商店與卡別，再打開這個網頁並自動填好。
-          <b style={{ color: "#F2EEE6" }}>每一筆都要你按「記下」才會存，</b>不會自動入帳。
+          兩種用法，可以並存：<br />
+          <b style={{ color: "#F2EEE6" }}>背景記帳（收件匣）</b>：刷卡後捷徑在背景把交易丟進你的收件匣，不跳出 Safari；下次打開網頁自動記進明細，標「自動」，分類可再改。<br />
+          <b style={{ color: "#F2EEE6" }}>打開確認</b>：捷徑打開這個網頁並填好，你按「記下」才存。
         </div>
       </div>
 
@@ -435,7 +543,33 @@ function ShortcutSettings({ settings, setSettings, cards, notify, onTest }) {
 
       {key && (
         <section className="panel">
-          <div className="panel-head"><h2>捷徑要用的網址開頭</h2></div>
+          <div className="panel-head"><h2>背景記帳：投遞網址</h2></div>
+          <div className="key-box small mono">{endpoint}</div>
+          <button className="soft-btn full" onClick={() => copy(endpoint, "投遞網址")}><Copy size={15} />複製投遞網址</button>
+          <div className="hint" style={{ marginTop: 0, lineHeight: 1.8 }}>
+            貼進捷徑的「取得 URL 內容」，方法選 <span className="mono">POST</span>，標頭加 <span className="mono">Content-Type: application/json</span>，要求本文選「檔案」並放下面那段文字。
+            這個網址本身不含金鑰；沒有金鑰的人送來會被 Firebase 安全規則擋掉，而且只能「新增」，讀不到也刪不掉你的任何資料。
+          </div>
+        </section>
+      )}
+
+      {key && (
+        <section className="panel">
+          <div className="panel-head"><h2>背景記帳：要送的文字</h2></div>
+          <div className="key-box small mono">{show ? tpl : tpl.replace(key, masked)}</div>
+          <button className="soft-btn full" onClick={() => copy(tpl, "文字範本")}><Copy size={15} />複製文字範本（含金鑰）</button>
+          <div className="hint" style={{ marginTop: 0, lineHeight: 1.8 }}>
+            貼進捷徑的「文字」動作後，把 4 個〔 〕整段刪掉，換成對應的藍色變數：〔數量〕→ 交易的「數量」、〔URL 編碼商家〕、〔URL 編碼卡片〕→ 前面兩個 URL 編碼的結果、〔格式化的日期〕→ 格式化日期（ISO 8601、含時間）。
+            付款時間要在送達前 10 分鐘內，舊資料重送會被擋。
+          </div>
+          <button className="soft-btn full" disabled={pinging} onClick={ping}><Zap size={15} />{pinging ? "投遞中…" : "從網頁送一筆測試到收件匣"}</button>
+          {inboxErr && <div className="hint" style={{ marginTop: 0, color: "#F2A48E" }}>收件匣讀取失敗（{inboxErr}）：通常是 Firebase 規則還沒更新。</div>}
+        </section>
+      )}
+
+      {key && (
+        <section className="panel">
+          <div className="panel-head"><h2>打開確認：網址開頭</h2></div>
           <div className="key-box small mono">{show ? base : base.replace(key, masked)}</div>
           <button className="soft-btn full" onClick={() => copy(base, "網址開頭")}><Copy size={15} />複製網址開頭</button>
           <div className="hint" style={{ marginTop: 0, lineHeight: 1.8 }}>
@@ -719,7 +853,7 @@ function Ledger({ transactions, setTransactions, month, cards }) {
   const cancelEdit = () => { setEditId(null); setDraft(null); };
   const saveEdit = () => {
     if (!draft.amount || +draft.amount <= 0) return;
-    setTransactions((p) => p.map((t) => t.id === editId ? { ...draft, amount: +draft.amount, cardId: draft.type === "expense" ? draft.cardId : "" } : t));
+    setTransactions((p) => p.map((t) => t.id === editId ? { ...draft, dup: false, amount: +draft.amount, cardId: draft.type === "expense" ? draft.cardId : "" } : t));
     cancelEdit();
   };
   const remove = (id) => {
@@ -830,7 +964,7 @@ function Ledger({ transactions, setTransactions, month, cards }) {
                 return (
                   <button key={t.id} className="tx" onClick={() => startEdit(t)} aria-label={`${t.category} ${num(t.amount)}，點擊修改`}>
                     <span className="tx-ico" style={{ background: s.bg, color: s.fg }}><s.Icon size={18} /></span>
-                    <span className="tx-txt"><b>{t.note || t.category}{t.src === "notify" && <em className="src-tag">自動</em>}</b><small>{t.type === "expense" ? (t.note ? `${t.category}，${cn || "現金"}` : (cn || "現金")) : (t.note ? t.category : "收入")}</small></span>
+                    <span className="tx-txt"><b>{t.note || t.category}{t.src === "notify" && <em className="src-tag">自動</em>}{t.dup && <em className="src-tag warn">可能重複</em>}</b><small>{t.type === "expense" ? (t.note ? `${t.category}，${cn || "現金"}` : (cn || "現金")) : (t.note ? t.category : "收入")}</small></span>
                     <span className="tx-val">
                       <b className={t.type}>{t.type === "income" ? "+" : "−"}{num(t.amount)}</b>
                       {reb > 0 && <small>回饋 {num(reb)}</small>}
