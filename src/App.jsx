@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import {
   Line, ComposedChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -11,7 +11,9 @@ import {
 } from "lucide-react";
 import { login, logout, watchAuth, cloudLoad, cloudSave } from "./firebase";
 import { buildMonthlyReport } from "./monthlyReport";
+import appCss from "./index.css?inline"; // 月報 PDF 自帶樣式，不依賴頁面當下載入的 CSS
 import { watchInbox, removeInbox, inboxEndpoint } from "./inbox";
+import { AnimNum, AnimRing, createSpring, rubber, project, velocityOf } from "./motion";
 
 // ---------- Constants ----------
 const CATEGORIES = {
@@ -197,6 +199,17 @@ async function copyText(text) {
   } catch { return false; }
 }
 
+// ===== 版本號：每次改版手動改（例：1.6 → 1.7）=====
+// 1.0 記帳、回饋、差旅、預算　1.1 Google 登入與雲端同步　1.2 出國消費　1.3 月報 PDF
+// 1.4 深色新介面　1.5 捷徑背景記帳（收件匣）　1.6 動態效果（apple-design）
+const APP_VERSION = "1.6";
+// 部署年月：讀 GitHub Pages 回傳的網頁更新時間，不用手動改
+function deployedAt() {
+  const d = new Date(document.lastModified);
+  if (isNaN(d)) return "";
+  return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
 const prevMonthKey = (m) => { let [y, mm] = m.split("-").map(Number); mm--; if (mm === 0) { mm = 12; y--; } return y + "-" + String(mm).padStart(2, "0"); };
 
 
@@ -286,7 +299,7 @@ function LedgerApp({ user }) {
   const [month, setMonth] = useState(monthKey(todayISO()));
   const [syncing, setSyncing] = useState(true);
   const [quick, setQuick] = useState(null); // 記一筆面板：{ type, category }
-  const [toast, setToast] = useState("");
+  const [toast, setToast] = useState(null); // { msg, action: { label, fn }, key }
   const toastTimer = useRef(null);
   const ready = useRef(false); // 雲端載入完成前，不要把空值寫回雲端
 
@@ -333,16 +346,33 @@ function LedgerApp({ user }) {
   }, [months, month]);
 
   const goto = (t) => { setTab(t); window.scrollTo(0, 0); };
-  const notify = (msg, ms = 2400) => {
-    setToast(msg);
+  const notify = (msg, ms = 2400, action = null) => {
+    setToast({ msg, action, key: Date.now() });
     clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(""), ms);
+    toastTimer.current = setTimeout(() => setToast(null), action ? Math.max(ms, 5000) : ms);
   };
+  // 剛進來的那幾筆：明細裡從上方滑入、金框閃一下
+  const [fresh, setFresh] = useState([]);
+  const markFresh = (ids) => {
+    if (!ids.length) return;
+    setFresh((f) => [...f, ...ids]);
+    setTimeout(() => setFresh((f) => f.filter((x) => !ids.includes(x))), 2600);
+  };
+  // iPhone Safari 要有 touchstart 監聽，按下時的 :active 效果才會即時出現
+  useEffect(() => {
+    const noop = () => {};
+    document.addEventListener("touchstart", noop, { passive: true });
+    return () => document.removeEventListener("touchstart", noop);
+  }, []);
   const saveQuick = (tx) => {
     setTransactions((p) => [tx, ...p]);
     setQuick(null);
     setMonth(monthKey(tx.date));
-    notify(`已記下 ${tx.category} ${num(tx.amount)}`);
+    markFresh([tx.id]);
+    // 不再跳確認視窗：直接記下，5 秒內可以按「復原」
+    notify(`已記下 ${tx.category} ${num(tx.amount)}${tx.dup ? "（可能重複）" : ""}`, 5000, {
+      label: "復原", fn: () => { setTransactions((p) => p.filter((t) => t.id !== tx.id)); notify("已復原，這筆沒有記下"); },
+    });
   };
 
   // 捷徑連結：讀到 #add 就先記下來，並立刻把網址清乾淨（金鑰與金額不留在網址列）
@@ -422,7 +452,7 @@ function LedgerApp({ user }) {
         if (bad) msg.push(`${bad} 筆金額無法辨識，已略過`);
         if (pings && !added.length) msg.push("收到捷徑的測試投遞，連線正常");
         if (msg.length) notify(msg.join("；"), 4500);
-        if (added.length) setMonth(monthKey(added[added.length - 1].date));
+        if (added.length) { setMonth(monthKey(added[added.length - 1].date)); markFresh(added.map((t) => t.id)); }
       } finally {
         inboxBusy.current = false;
         const next = inboxQueue.current;
@@ -456,7 +486,7 @@ function LedgerApp({ user }) {
 
       <main className="content">
         {tab === "home" && <HomeScreen transactions={transactions} budgets={budgets} cards={cards} trips={trips} month={month} onAdd={setQuick} goto={goto} />}
-        {tab === "ledger" && <Ledger transactions={transactions} setTransactions={setTransactions} month={month} cards={cards} />}
+        {tab === "ledger" && <Ledger transactions={transactions} setTransactions={setTransactions} month={month} cards={cards} notify={notify} fresh={fresh} />}
         {tab === "reports" && <Reports transactions={transactions} trips={trips} month={month} cards={cards} budgets={budgets} overseas={overseas} setOverseas={setOverseas}
           setTransactions={setTransactions} setTrips={setTrips} setCards={setCards} setBudgets={setBudgets} />}
         {tab === "budget" && <Budget budgets={budgets} setBudgets={setBudgets} transactions={transactions} month={month} />}
@@ -478,7 +508,12 @@ function LedgerApp({ user }) {
       </nav>
 
       {quick && <QuickAdd init={quick} cards={cards} budgets={budgets} transactions={transactions} onSave={saveQuick} onClose={() => setQuick(null)} />}
-      {toast && <div className="toast" role="status">{toast}</div>}
+      {toast && (
+        <div key={toast.key} className={"toast" + (toast.action ? " has-act" : "")} role="status">
+          <span>{toast.msg}</span>
+          {toast.action && <button type="button" onClick={() => { const a = toast.action; clearTimeout(toastTimer.current); setToast(null); a.fn(); }}>{toast.action.label}</button>}
+        </div>
+      )}
     </div>
   );
 }
@@ -621,6 +656,7 @@ function More({ user, cards, trips, overseas, transactions, month, goto, setting
           <span className="list-txt"><b>登出</b><small>下次登入可以重新選擇帳號</small></span>
         </button>
       </div>
+      <p className="app-ver">記帳台 v{APP_VERSION} {deployedAt()}</p>
     </div>
   );
 }
@@ -652,6 +688,9 @@ function HomeScreen({ transactions, budgets, cards, trips, month, onAdd, goto })
   const budgeted = CATEGORIES.expense.filter((c) => (budgets[c] || 0) > 0);
   const hasBudget = budgeted.length > 0;
   const left = budgeted.reduce((s, c) => s + Math.max(0, budgets[c] - (spentBy[c] || 0)), 0);
+  const budgetTotal = budgeted.reduce((s, c) => s + budgets[c], 0);
+  const budgetSpent = budgeted.reduce((s, c) => s + (spentBy[c] || 0), 0);
+  const usedPct = budgetTotal ? budgetSpent / budgetTotal * 100 : 0;
   const pend = trips.filter((t) => !t.reimbursed && t.items.length > 0);
   const pendAmt = pend.reduce((s, t) => s + t.items.reduce((a, x) => a + x.amount, 0), 0);
   const mNum = +month.slice(5);
@@ -662,7 +701,14 @@ function HomeScreen({ transactions, budgets, cards, trips, month, onAdd, goto })
         <div className="hero-glow" aria-hidden="true" /><div className="hero-line" aria-hidden="true" />
         <div className="hero-body">
           <div className="hero-label">{hasBudget ? `${mNum} 月預算還能花` : `${mNum} 月結餘`}</div>
-          <div className="hero-num"><span className="cur">NT$</span><span className={"big" + (!hasBudget && bal < 0 ? " neg" : "")}>{num(hasBudget ? left : bal)}</span></div>
+          <div className="hero-row">
+            <div className="hero-num"><span className="cur">NT$</span><AnimNum className={"big" + (!hasBudget && bal < 0 ? " neg" : "")} value={hasBudget ? left : bal} format={num} /></div>
+            {hasBudget && (
+              <AnimRing ratio={usedPct / 100} over={usedPct > 100}>
+                <b><AnimNum value={usedPct} format={(x) => Math.round(x) + "%"} /></b><small>已用</small>
+              </AnimRing>
+            )}
+          </div>
           <div className="pills">
             {hasBudget && <span className="pill"><i style={{ background: bal >= 0 ? "#6FCF8F" : "#F2A48E" }} />結餘 {num(bal)}</span>}
             {pend.length > 0 && <button className="pill" onClick={() => goto("travel")}><i style={{ background: "#E0A458" }} />{pend.length} 趟差旅待報帳</button>}
@@ -726,13 +772,67 @@ function QuickAdd({ init, cards, budgets, transactions, onSave, onClose }) {
   const [note, setNote] = useState(init.note || "");
   const [date, setDate] = useState(init.date || todayISO());
 
+  // 面板位置用彈簧控制：從下方滑上來、往下拉跟著手指、用力甩就關、關閉時從原路退回下方
+  const sheetRef = useRef(null), scrimRef = useRef(null);
+  const ySp = useRef(null);
+  const vh = () => window.innerHeight || 800;
+  const afterClose = useRef(null);
+  if (!ySp.current) ySp.current = createSpring(vh(), { response: 0.35, damping: 1, precision: 0.5 }, (y) => {
+    if (sheetRef.current) sheetRef.current.style.transform = Math.abs(y) > 0.5 ? `translate3d(0,${y}px,0)` : "";
+    if (scrimRef.current) scrimRef.current.style.opacity = String(0.55 * (1 - Math.min(1, Math.max(0, y) / vh())));
+    // 面板一離開畫面就算關好，不等彈簧最後那段看不見的尾巴
+    if (afterClose.current && y >= vh() - 1) { const cb = afterClose.current; afterClose.current = null; cb(); }
+  });
+  useLayoutEffect(() => { ySp.current.set(vh()); ySp.current.to(0); return () => ySp.current.stop(); }, []);
+  const closing = useRef(false);
+  const dismiss = (after, velocity) => {
+    if (closing.current) return;
+    closing.current = true;
+    afterClose.current = after;
+    ySp.current.to(vh() + 40, velocity);
+  };
+  const closeSheet = () => dismiss(onClose);
+
   useEffect(() => {
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    const onKey = (e) => { if (e.key === "Escape") closeSheet(); };
     window.addEventListener("keydown", onKey);
     return () => { document.body.style.overflow = prev; window.removeEventListener("keydown", onKey); };
-  }, [onClose]);
+  }, [onClose]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 拖拉：在面板頂端（把手與標題列）上下拖；先移動 10px 確認方向才接管
+  const drag = useRef(null);
+  const suppressClick = useRef(false);
+  const onDragDown = (e) => {
+    if (closing.current || (e.pointerType === "mouse" && e.button !== 0)) return;
+    drag.current = { x0: e.clientX, y0: e.clientY, base: 0, lock: null, id: e.pointerId, el: e.currentTarget, hist: [{ y: e.clientY, t: e.timeStamp }] };
+  };
+  const onDragMove = (e) => {
+    const d = drag.current; if (!d) return;
+    if (d.lock === null) {
+      const dx = e.clientX - d.x0, dy = e.clientY - d.y0;
+      if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+      d.lock = Math.abs(dy) > Math.abs(dx) ? "y" : "x";
+      if (d.lock !== "y") return;
+      try { d.el.setPointerCapture(d.id); } catch { /* 沒關係 */ }
+      d.base = ySp.current.value; d.y0 = e.clientY; // 從畫面上目前的位置接手（開場動畫中也能抓住）
+      ySp.current.set(d.base);
+    }
+    if (d.lock !== "y") return;
+    let y = d.base + (e.clientY - d.y0);
+    if (y < 0) y = rubber(y, vh()); // 往上拉越拉越緊
+    ySp.current.set(y);
+    d.hist.push({ y: e.clientY, t: e.timeStamp }); if (d.hist.length > 5) d.hist.shift();
+  };
+  const onDragEnd = (e) => {
+    const d = drag.current; drag.current = null;
+    if (!d || d.lock !== "y") return;
+    suppressClick.current = true; setTimeout(() => { suppressClick.current = false; }, 80);
+    const v = velocityOf(d.hist, "y", e.timeStamp);
+    const landing = ySp.current.value + project(v); // 用速度推算會停在哪
+    if (landing > vh() * 0.35) dismiss(onClose, v); else ySp.current.to(0, v);
+  };
 
   const n = parseFloat(amt) || 0;
   const validCard = cards.some((c) => c.id === cardId) ? cardId : "";
@@ -754,35 +854,43 @@ function QuickAdd({ init, cards, budgets, transactions, onSave, onClose }) {
   };
   const switchType = (tp) => { if (tp === type) return; setType(tp); setCategory(CATEGORIES[tp][0]); };
   const save = () => {
-    if (n <= 0) return;
+    if (n <= 0 || closing.current) return;
+    let dup = false;
     if (init.fromLink && type === "expense") {
       const me = { date, amount: n };
       const savedHere = transactions.find((t) => t.type === "expense" && sameTx(t, me));
       const savedElsewhere = recentLinks().filter((r) => r.kind === "saved" && sameTx(r, me)).pop();
-      const hit = savedHere || savedElsewhere;
-      if (hit && !window.confirm(`${+date.slice(5, 7)}/${+date.slice(8)} 已經記過一筆 ${num(n)}${hit.note ? `（${hit.note}）` : ""}。\n確定這是另一筆、還要再記一次嗎？`)) return;
+      // 不跳確認視窗：照記，標「可能重複」，記下後可在 5 秒內按「復原」
+      if (savedHere || savedElsewhere) dup = true;
       logRecent({ ...me, note: note.trim(), kind: "saved" });
     }
     const cid = type === "expense" ? validCard : "";
     try { if (type === "expense") localStorage.setItem("ledger:lastCard", cid); } catch { /* 無痕模式可能無法寫入 */ }
-    onSave({ id: uid(), date, type, category, amount: n, note: note.trim(), cardId: cid, ...(init.src ? { src: init.src } : {}) });
+    const tx = { id: uid(), date, type, category, amount: n, note: note.trim(), cardId: cid, ...(init.src ? { src: init.src } : {}), ...(dup ? { dup: true } : {}) };
+    dismiss(() => onSave(tx));
   };
 
   const parts = (amt === "" ? "0" : amt).split(".");
   const amtText = (parseInt(parts[0], 10) || 0).toLocaleString("en-US") + (parts.length > 1 ? "." + parts[1] : "");
 
   return (
-    <div className="sheet" role="dialog" aria-modal="true" aria-label={type === "expense" ? "記一筆支出" : "記一筆收入"}>
+    <>
+    <div className="sheet-scrim" ref={scrimRef} aria-hidden="true" />
+    <div className="sheet" ref={sheetRef} role="dialog" aria-modal="true" aria-label={type === "expense" ? "記一筆支出" : "記一筆收入"}>
       <div className="sheet-glow" aria-hidden="true" />
       <div className="sheet-inner">
+        <div className="sheet-drag" onPointerDown={onDragDown} onPointerMove={onDragMove} onPointerUp={onDragEnd} onPointerCancel={onDragEnd}
+          onClickCapture={(e) => { if (suppressClick.current) { e.preventDefault(); e.stopPropagation(); } }}>
+        <div className="sheet-grab" aria-hidden="true" />
         <header className="sheet-head">
-          <button className="circle-btn" onClick={onClose} aria-label="關閉"><X size={18} /></button>
+          <button className="circle-btn" onClick={closeSheet} aria-label="關閉"><X size={18} /></button>
           <div className="seg">
             <button className={type === "expense" ? "on" : ""} onClick={() => switchType("expense")}>支出</button>
             <button className={type === "income" ? "on" : ""} onClick={() => switchType("income")}>收入</button>
           </div>
           <input className="date-pill" type="date" value={date} onChange={(e) => setDate(e.target.value || todayISO())} aria-label="日期" />
         </header>
+        </div>
 
         {init.dupNote && <div className="link-banner warn"><AlertTriangle size={16} /><span><b>可能重複記帳</b><small>{init.dupNote}</small></span></div>}
         {init.fromLink && (
@@ -839,11 +947,57 @@ function QuickAdd({ init, cards, budgets, transactions, onSave, onClose }) {
         <button className="save-btn" disabled={n <= 0} onClick={save}>記下</button>
       </div>
     </div>
+    </>
   );
 }
 
 // ---------- 明細 ----------
-function Ledger({ transactions, setTransactions, month, cards }) {
+// 明細左滑刪除：先移動 10px 確認是橫向才接管（不跟上下捲動打架）；拖過一半或用力甩就刪，不夠就彈回
+function SwipeRow({ onDelete, className, children }) {
+  const wrap = useRef(null), inner = useRef(null), sp = useRef(null), d = useRef(null), suppress = useRef(false), gone = useRef(false);
+  if (!sp.current) sp.current = createSpring(0, { response: 0.3, damping: 1, precision: 0.5 }, (x) => {
+    if (inner.current) inner.current.style.transform = Math.abs(x) > 0.5 ? `translate3d(${x}px,0,0)` : "";
+    if (wrap.current) wrap.current.style.setProperty("--sw", String(Math.min(1, Math.max(0, -x) / 90)));
+  });
+  useEffect(() => () => sp.current.stop(), []);
+  const W = () => (wrap.current ? wrap.current.clientWidth : 320);
+  const down = (e) => {
+    if (gone.current || (e.pointerType === "mouse" && e.button !== 0)) return;
+    d.current = { x0: e.clientX, y0: e.clientY, base: sp.current.value, lock: null, id: e.pointerId, hist: [{ x: e.clientX, t: e.timeStamp }] };
+  };
+  const move = (e) => {
+    const g = d.current; if (!g) return;
+    if (g.lock === null) {
+      const dx = e.clientX - g.x0, dy = e.clientY - g.y0;
+      if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+      g.lock = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+      if (g.lock !== "x") { d.current = null; return; }
+      try { wrap.current.setPointerCapture(g.id); } catch { /* 沒關係 */ }
+      g.base = sp.current.value; g.x0 = e.clientX; sp.current.set(g.base);
+    }
+    let x = g.base + (e.clientX - g.x0);
+    if (x > 0) x = rubber(x, W()); // 往右拉越拉越緊
+    sp.current.set(x);
+    g.hist.push({ x: e.clientX, t: e.timeStamp }); if (g.hist.length > 5) g.hist.shift();
+  };
+  const up = (e) => {
+    const g = d.current; d.current = null;
+    if (!g || g.lock !== "x") return;
+    suppress.current = true; setTimeout(() => { suppress.current = false; }, 80);
+    const v = velocityOf(g.hist, "x", e.timeStamp);
+    if (sp.current.value + project(v) < -W() * 0.5) { gone.current = true; sp.current.to(-W() - 24, v); setTimeout(onDelete, 200); }
+    else sp.current.to(0, v);
+  };
+  return (
+    <div ref={wrap} className={"swipe" + (className ? " " + className : "")} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
+      onClickCapture={(e) => { if (suppress.current) { e.preventDefault(); e.stopPropagation(); } }}>
+      <div className="swipe-del" aria-hidden="true"><Trash2 size={17} />刪除</div>
+      <div ref={inner} className="swipe-inner">{children}</div>
+    </div>
+  );
+}
+
+function Ledger({ transactions, setTransactions, month, cards, notify, fresh = [] }) {
   const [editId, setEditId] = useState(null);
   const [draft, setDraft] = useState(null);
   const [msg, setMsg] = useState("");
@@ -856,10 +1010,20 @@ function Ledger({ transactions, setTransactions, month, cards }) {
     setTransactions((p) => p.map((t) => t.id === editId ? { ...draft, dup: false, amount: +draft.amount, cardId: draft.type === "expense" ? draft.cardId : "" } : t));
     cancelEdit();
   };
+  // 不跳確認視窗：直接刪，5 秒內可以按「復原」放回原位
   const remove = (id) => {
-    if (!window.confirm("確定要刪除這筆紀錄嗎？")) return;
-    setTransactions((p) => p.filter((t) => t.id !== id));
+    const idx = transactions.findIndex((t) => t.id === id);
+    const t = transactions[idx];
+    if (!t) return;
+    setTransactions((p) => p.filter((x) => x.id !== id));
     cancelEdit();
+    notify(`已刪除 ${t.note || t.category} ${num(t.amount)}`, 5000, {
+      label: "復原",
+      fn: () => setTransactions((p) => {
+        if (p.some((x) => x.id === t.id)) return p;
+        const a = [...p]; a.splice(Math.min(idx, a.length), 0, t); return a;
+      }),
+    });
   };
 
   const importCSV = (e) => {
@@ -940,9 +1104,9 @@ function Ledger({ transactions, setTransactions, month, cards }) {
 
       <section className="sum3">
         <div className="hero-line" aria-hidden="true" />
-        <div><small>收入</small><b style={{ color: "#8FD0DE" }}>{num(income)}</b></div>
-        <div><small>支出</small><b style={{ color: "#F2A48E" }}>{num(expense)}</b></div>
-        <div><small>結餘</small><b>{num(income - expense)}</b></div>
+        <div><small>收入</small><b style={{ color: "#8FD0DE" }}><AnimNum value={income} format={num} /></b></div>
+        <div><small>支出</small><b style={{ color: "#F2A48E" }}><AnimNum value={expense} format={num} /></b></div>
+        <div><small>結餘</small><b><AnimNum value={income - expense} format={num} /></b></div>
       </section>
 
       {groups.length === 0 ? <div className="card"><Empty text="本月還沒有紀錄，到「記一筆」新增" /></div> : groups.map(([date, list]) => {
@@ -962,7 +1126,8 @@ function Ledger({ transactions, setTransactions, month, cards }) {
                 const reb = rebateOf(t, cards);
                 const cn = cardName(t.cardId, cards);
                 return (
-                  <button key={t.id} className="tx" onClick={() => startEdit(t)} aria-label={`${t.category} ${num(t.amount)}，點擊修改`}>
+                  <SwipeRow key={t.id} className={fresh.includes(t.id) ? "fresh" : ""} onDelete={() => remove(t.id)}>
+                  <button className="tx" onClick={() => startEdit(t)} aria-label={`${t.category} ${num(t.amount)}，點擊修改，向左滑刪除`}>
                     <span className="tx-ico" style={{ background: s.bg, color: s.fg }}><s.Icon size={18} /></span>
                     <span className="tx-txt"><b>{t.note || t.category}{t.src === "notify" && <em className="src-tag">自動</em>}{t.dup && <em className="src-tag warn">可能重複</em>}</b><small>{t.type === "expense" ? (t.note ? `${t.category}，${cn || "現金"}` : (cn || "現金")) : (t.note ? t.category : "收入")}</small></span>
                     <span className="tx-val">
@@ -970,13 +1135,14 @@ function Ledger({ transactions, setTransactions, month, cards }) {
                       {reb > 0 && <small>回饋 {num(reb)}</small>}
                     </span>
                   </button>
+                  </SwipeRow>
                 );
               })}
             </div>
           </div>
         );
       })}
-      <div className="hint">點任一筆可以修改或刪除。CSV 格式：日期,類型,分類,金額,備註（第一列可為標題）</div>
+      <div className="hint">點一筆可以修改，向左滑可以刪除（刪錯可按「復原」）。CSV 格式：日期,類型,分類,金額,備註（第一列可為標題）</div>
     </div>
   );
 }
@@ -1603,12 +1769,15 @@ function Reports({ transactions, trips, month, cards, budgets, overseas, setOver
     setPdfBusy(true); setPdfMsg("");
     const host = document.createElement("div");
     host.className = "mr-export";
+    // 位置與寬度直接寫在元素上：不管瀏覽器視窗多寬、頁面 CSS 是否載入，都用 1000px 版面輸出
+    host.style.cssText = "position:fixed;left:-12000px;top:0;width:1000px;background:#fff;";
     try {
       const [{ default: html2canvas }, { jsPDF }] = await Promise.all([import("html2canvas"), import("jspdf")]);
-      host.innerHTML = `<article class="mr-sheet mr-print">${buildMonthlyReport({ transactions, cards, budgets, month })}</article>`;
+      host.innerHTML = `<style>${appCss}</style><article class="mr-sheet mr-print">${buildMonthlyReport({ transactions, cards, budgets, month })}</article>`;
       document.body.appendChild(host);
       if (document.fonts && document.fonts.ready) await document.fonts.ready;
-      const canvas = await html2canvas(host.firstElementChild, { scale: 2, backgroundColor: "#ffffff", logging: false });
+      const sheet = host.querySelector("article");
+      const canvas = await html2canvas(sheet, { scale: 2, backgroundColor: "#ffffff", logging: false, windowWidth: 1000, width: sheet.offsetWidth, height: sheet.offsetHeight });
       const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
       const PW = 210, PH = 297, M = 8;
       let w = PW - M * 2, h = canvas.height * w / canvas.width;
@@ -1632,10 +1801,10 @@ function Reports({ transactions, trips, month, cards, budgets, overseas, setOver
         <div className="hero-glow" aria-hidden="true" /><div className="hero-line" aria-hidden="true" />
         <div className="hero-body">
           <div className="hero-label">{mNum} 月結餘</div>
-          <div className="hero-num"><span className="cur">NT$</span><span className={"big" + (bal < 0 ? " neg" : "")}>{num(bal)}</span></div>
+          <div className="hero-num"><span className="cur">NT$</span><AnimNum className={"big" + (bal < 0 ? " neg" : "")} value={bal} format={num} /></div>
           <div className="mini2">
-            <div className="mini"><small>收入</small><b className="inc">{num(income)}</b>{di && <em className={di.c}>{di.t}</em>}</div>
-            <div className="mini"><small>支出</small><b className="exp">{num(expense)}</b>{de && <em className={de.c}>{de.t}</em>}</div>
+            <div className="mini"><small>收入</small><b className="inc"><AnimNum value={income} format={num} /></b>{di && <em className={di.c}>{di.t}</em>}</div>
+            <div className="mini"><small>支出</small><b className="exp"><AnimNum value={expense} format={num} /></b>{de && <em className={de.c}>{de.t}</em>}</div>
           </div>
           <div className="pills">
             <span className="pill"><i style={{ background: "#6FCF8F" }} />儲蓄率 {rate === null ? "—" : rate.toFixed(1) + "%"}</span>

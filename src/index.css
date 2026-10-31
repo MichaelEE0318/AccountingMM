@@ -81,8 +81,7 @@ em.good { color: var(--good); } em.bad { color: var(--exp); } em.flat { color: v
 .sec-head span { font-size: 12px; color: var(--faint); }
 .tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .tile { display: flex; align-items: center; gap: 12px; height: 80px; padding: 0 14px; border-radius: 18px; border: 1px solid transparent;
-  color: var(--text); text-align: left; transition: transform .1s; min-width: 0; }
-.tile:active { transform: scale(.98); }
+  color: var(--text); text-align: left; min-width: 0; }
 .tile-ico { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 12px; background: rgba(0,0,0,0.28); flex-shrink: 0; }
 .tile-txt { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .tile-txt b { font-size: 15px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -158,7 +157,7 @@ em.good { color: var(--good); } em.bad { color: var(--exp); } em.flat { color: v
 .day-list { border-radius: 18px; background: var(--s1); border: 1px solid var(--line); overflow: hidden; }
 .tx { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 64px; padding: 10px 14px; background: none; border: none;
   border-top: 1px solid var(--line); color: var(--text); text-align: left; }
-.day-list > :first-child { border-top: none; }
+.day-list > :first-child, .day-list > :first-child .tx { border-top: none; }
 .tx:active { background: var(--s2); }
 .tx-ico { display: flex; align-items: center; justify-content: center; width: 38px; height: 38px; border-radius: 11px; flex-shrink: 0; }
 .tx-ico.sm { width: 28px; height: 28px; border-radius: 8px; }
@@ -174,7 +173,7 @@ em.good { color: var(--good); } em.bad { color: var(--exp); } em.flat { color: v
 .edit-actions button { white-space: nowrap; padding: 0 8px; min-height: 48px; }
 
 /* ===== 記一筆面板 ===== */
-.sheet { position: fixed; inset: 0; z-index: 60; background: var(--bg); overflow-y: auto; -webkit-overflow-scrolling: touch; animation: sheetIn .22s ease-out; }
+.sheet { position: fixed; inset: 0; z-index: 60; background: var(--bg); overflow-y: auto; -webkit-overflow-scrolling: touch; will-change: transform; overscroll-behavior: contain; }
 @keyframes sheetIn { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
 .sheet-glow { position: absolute; top: -150px; left: 50%; width: 440px; height: 380px; margin-left: -220px; pointer-events: none;
   background: radial-gradient(ellipse at 50% 40%, rgba(236,196,140,0.18) 0%, rgba(236,196,140,0.05) 45%, rgba(236,196,140,0) 70%); }
@@ -215,7 +214,7 @@ em.good { color: var(--good); } em.bad { color: var(--exp); } em.flat { color: v
 @media (max-height: 700px) { .amt .big { font-size: 48px; } .keypad button { height: 46px; } .sheet-inner { gap: 10px; } }
 .toast { position: fixed; z-index: 70; left: 0; right: 0; margin: 0 auto; width: fit-content; max-width: calc(100% - 32px);
   bottom: calc(env(safe-area-inset-bottom, 0px) + 96px); padding: 10px 16px; border-radius: 14px; background: #ECE5D6; color: #1A1813;
-  font-size: 14px; font-weight: 700; box-shadow: 0 10px 24px rgba(0,0,0,0.45); animation: fadeIn .2s ease-out; }
+  font-size: 14px; font-weight: 700; box-shadow: 0 10px 24px rgba(0,0,0,0.45); animation: toastIn .32s cubic-bezier(.2,.8,.2,1); }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
 /* ===== 一般卡片、表單、按鈕（信用卡、差旅、出國、預算沿用） ===== */
@@ -298,7 +297,7 @@ em.good { color: var(--good); } em.bad { color: var(--exp); } em.flat { color: v
 .budget-cat { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 500; }
 .budget-input { width: 120px; padding: 9px 10px; border: 1px solid var(--line2); border-radius: 10px; background: var(--s2); color: var(--text); text-align: right; }
 .bar { height: 8px; background: var(--s3); border-radius: 6px; overflow: hidden; }
-.bar-fill { height: 100%; border-radius: 6px; transition: width .3s; }
+.bar-fill { height: 100%; border-radius: 6px; transition: width .45s cubic-bezier(.2,.8,.2,1); }
 .budget-status { font-size: 12px; color: var(--faint); margin-top: 5px; }
 .budget-status.over { color: var(--exp); }
 
@@ -425,3 +424,57 @@ em.good { color: var(--good); } em.bad { color: var(--exp); } em.flat { color: v
 .link-banner.warn b { color: #F6C3B4; }
 .src-tag.warn { color: #F2A48E; background: rgba(242,164,142,0.12); }
 .soft-btn:disabled { opacity: .55; }
+
+/* ===== 動態效果（apple-design）===== */
+/* 1. 按下的瞬間就縮一下，放開再回來（用獨立的 scale 屬性，不影響其他 transform） */
+.keypad button, .tile, .cat-chip, .pay-chip, .bnav-item, .gold-btn, .soft-btn, .ghost-btn, .danger-btn, .save-btn,
+.row-card, .list-row, .circle-btn, .seg button, .pill, .toast button {
+  transition: scale 180ms cubic-bezier(.2,.8,.2,1), background-color 120ms; }
+.keypad button:active, .cat-chip:active, .pay-chip:active, .circle-btn:active, .seg button:active, .pill:active, .toast button:active { scale: .94; transition-duration: 60ms; }
+.tile:active, .gold-btn:active, .soft-btn:active, .ghost-btn:active, .danger-btn:active, .save-btn:active:not(:disabled), .bnav-item:active { scale: .96; transition-duration: 60ms; }
+.row-card:active, .list-row:active { scale: .985; transition-duration: 60ms; }
+
+/* 2. 首頁預算圓環 */
+.hero-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; }
+.ring { position: relative; flex-shrink: 0; }
+.ring svg { display: block; }
+.ring-c { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.1; }
+.ring-c b { font-family: Outfit, sans-serif; font-size: 15px; font-weight: 600; }
+.ring-c small { font-size: 10px; color: var(--faint); }
+
+/* 3. 復原吐司：從下方浮上來 */
+.toast.has-act { display: flex; align-items: center; gap: 14px; padding: 6px 8px 6px 16px; }
+.toast.has-act span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.toast button { flex-shrink: 0; font: inherit; color: #9A5B12; background: rgba(224,164,88,0.18); border: none; border-radius: 10px; padding: 8px 12px; cursor: pointer; }
+@keyframes toastIn { from { transform: translateY(18px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* 4. 記一筆面板：遮罩、把手、拖拉區 */
+.sheet-scrim { position: fixed; inset: 0; z-index: 59; background: #000; opacity: 0; pointer-events: none; }
+.sheet-drag { display: flex; flex-direction: column; gap: 8px; touch-action: none; margin-top: -6px; }
+.sheet-grab { width: 40px; height: 5px; border-radius: 3px; background: rgba(255,255,255,0.22); margin: 0 auto; }
+
+/* 5. 明細左滑刪除 */
+.swipe { position: relative; overflow: hidden; touch-action: pan-y; --sw: 0; }
+.swipe-del { position: absolute; inset: 0; display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding-right: 20px;
+  background: #7A2E22; color: #FFD9CF; font-size: 13px; opacity: var(--sw); }
+.swipe-inner { position: relative; background: var(--s1); will-change: transform; }
+
+/* 6. 剛進來的那一筆：從上方滑入、金框閃一下 */
+.swipe.fresh .swipe-inner { animation: txIn .45s cubic-bezier(.2,.8,.2,1) both; }
+.swipe.fresh .swipe-inner::after { content: ""; position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 0 1.5px var(--gold);
+  animation: txFlash 2.2s ease-out forwards; }
+@keyframes txIn { from { transform: translateY(-14px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes txFlash { 0%, 30% { opacity: 1; } 100% { opacity: 0; } }
+
+/* 系統「減少動態效果」：不滑動、不縮放，只用淡入淡出（彈簧在程式裡也會直接到位） */
+@media (prefers-reduced-motion: reduce) {
+  .keypad button, .tile, .cat-chip, .pay-chip, .bnav-item, .gold-btn, .soft-btn, .ghost-btn, .danger-btn, .save-btn,
+  .row-card, .list-row, .circle-btn, .seg button, .pill, .toast button { transition: background-color 120ms; scale: none !important; }
+  .toast { animation: fadeIn .2s ease-out; }
+  .swipe.fresh .swipe-inner { animation: fadeIn .3s ease-out both; }
+  .sheet { animation: fadeIn .2s ease-out; }
+  .bar-fill { transition: none; }
+}
+
+/* 更多頁底部的版本小字 */
+.app-ver { margin: 4px 0 0; text-align: center; font-size: 11px; color: var(--faint); font-family: Outfit, 'Noto Sans TC', sans-serif; font-variant-numeric: tabular-nums; letter-spacing: .02em; }
