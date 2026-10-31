@@ -10,7 +10,7 @@ import {
   MoreHorizontal, ChevronDown, ChevronRight, ChevronLeft, Delete, LogOut, User, Zap, Copy, RefreshCw, Eye, EyeOff,
 } from "lucide-react";
 import { login, logout, watchAuth, cloudLoad, cloudSave } from "./firebase";
-import { buildMonthlyReport, totalBudget, catBudgets, daysLeftIn, DEFAULT_EXCLUDE } from "./monthlyReport";
+import { buildMonthlyReport, totalBudget, monthTotal, catBudgets, daysLeftIn, DEFAULT_EXCLUDE } from "./monthlyReport";
 import appCss from "./index.css?inline"; // 月報 PDF 自帶樣式，不依賴頁面當下載入的 CSS
 import { watchInbox, removeInbox, inboxEndpoint } from "./inbox";
 import { AnimNum, AnimRing, createSpring, rubber, project, velocityOf } from "./motion";
@@ -199,10 +199,10 @@ async function copyText(text) {
   } catch { return false; }
 }
 
-// ===== 版本號：每次改版手動改（例：1.6 → 1.7）=====
+// ===== 版本號：每次改版手動改（新功能 1.6 → 1.7，小調整 1.7 → 1.7.1）=====
 // 1.0 記帳、回饋、差旅、預算　1.1 Google 登入與雲端同步　1.2 出國消費　1.3 月報 PDF
-// 1.4 深色新介面　1.5 捷徑背景記帳（收件匣）　1.6 動態效果（apple-design）　1.7 總預算
-const APP_VERSION = "1.7";
+// 1.4 深色新介面　1.5 捷徑背景記帳（收件匣）　1.6 動態效果（apple-design）　1.7 總預算　1.7.1 每月可另設總預算
+const APP_VERSION = "1.7.1";
 // 部署年月：讀 GitHub Pages 回傳的網頁更新時間，不用手動改
 function deployedAt() {
   const d = new Date(document.lastModified);
@@ -690,7 +690,7 @@ function HomeScreen({ transactions, budgets, cards, trips, month, onAdd, goto })
   const left = budgeted.reduce((s, c) => s + Math.max(0, budgets[c] - (spentBy[c] || 0)), 0);
   const budgetTotal = budgeted.reduce((s, c) => s + budgets[c], 0);
   const budgetSpent = budgeted.reduce((s, c) => s + (spentBy[c] || 0), 0);
-  const tb = totalBudget(budgets, spentBy);
+  const tb = totalBudget(budgets, spentBy, month);
   const days = daysLeftIn(month);
   // 有設總預算就用總預算；沒有的話用「有設上限的分類」加總
   const heroLeft = tb ? tb.left : left;
@@ -721,7 +721,7 @@ function HomeScreen({ transactions, budgets, cards, trips, month, onAdd, goto })
             {pend.length > 0 && <button className="pill" onClick={() => goto("travel")}><i style={{ background: "#E0A458" }} />{pend.length} 趟差旅待報帳</button>}
             <span className="pill"><i style={{ background: "#B99AD6" }} />回饋 {num(rebate)}</span>
           </div>
-          <div className="hero-cap">{tb ? `總預算 ${num(tb.total)}，已花 ${num(tb.spent)}${tb.exclude.length ? `（不含${tb.exclude.join("、")}）` : ""}` : hasBudget ? "只計有設預算的分類" : "到「預算」設定總預算，這裡會改成顯示還能花多少"}</div>
+          <div className="hero-cap">{tb ? `${tb.custom ? "本月另設" : ""}總預算 ${num(tb.total)}，已花 ${num(tb.spent)}${tb.exclude.length ? `（不含${tb.exclude.join("、")}）` : ""}` : hasBudget ? "只計有設預算的分類" : "到「預算」設定總預算，這裡會改成顯示還能花多少"}</div>
         </div>
       </section>
 
@@ -851,7 +851,7 @@ function QuickAdd({ init, cards, budgets, transactions, onSave, onClose }) {
   const after = lim - spent - n;
   const mSpent = {};
   transactions.forEach((t) => { if (t.type === "expense" && monthKey(t.date) === m) mSpent[t.category] = (mSpent[t.category] || 0) + t.amount; });
-  const tbNow = totalBudget(budgets, mSpent);
+  const tbNow = totalBudget(budgets, mSpent, m);
   const tbAfter = tbNow && !tbNow.exclude.includes(category) ? tbNow.left - n : null;
 
   const press = (k) => {
@@ -1511,12 +1511,22 @@ function Budget({ budgets, setBudgets, transactions, month }) {
   // 總預算
   const spentBy = {};
   mtx.forEach((t) => { spentBy[t.category] = (spentBy[t.category] || 0) + t.amount; });
-  const total = +budgets.__total || 0;
+  const defTotal = +budgets.__total || 0;
+  const monthly = budgets.__monthly && typeof budgets.__monthly === "object" ? budgets.__monthly : {};
+  const total = monthTotal(budgets, month).total;
   const exclude = Array.isArray(budgets.__exclude) ? budgets.__exclude : DEFAULT_EXCLUDE;
-  const tb = totalBudget(budgets, spentBy);
+  const tb = totalBudget(budgets, spentBy, month);
   const days = daysLeftIn(month);
   const mNum = +month.slice(5);
   const setTotal = (val) => setBudgets((p) => ({ ...p, __total: Math.max(0, +val || 0) }));
+  // 這個月另外設：填了就只套用在這個月，清空就回到預設
+  const setMonthTotal = (val) => setBudgets((p) => {
+    const mo = { ...(p.__monthly && typeof p.__monthly === "object" ? p.__monthly : {}) };
+    const v = Math.max(0, +val || 0);
+    if (v > 0) mo[month] = v; else delete mo[month];
+    return { ...p, __monthly: mo };
+  });
+  const otherMonths = Object.entries(monthly).filter(([k, v]) => k !== month && +v > 0).sort((a, b) => a[0].localeCompare(b[0]));
   const toggleEx = (c) => setBudgets((p) => {
     const cur = Array.isArray(p.__exclude) ? p.__exclude : DEFAULT_EXCLUDE;
     return { ...p, __exclude: cur.includes(c) ? cur.filter((x) => x !== c) : [...cur, c] };
@@ -1529,9 +1539,14 @@ function Budget({ budgets, setBudgets, transactions, month }) {
 
       <section className="card tb-card">
         <div className="budget-head">
-          <span className="budget-cat"><b>每月總預算</b></span>
-          <input type="number" inputMode="numeric" value={total || ""} onChange={(e) => setTotal(e.target.value)} placeholder="未設定" className="budget-input" aria-label="每月總預算" />
+          <span className="budget-cat"><span className="tb-lbl"><b>預設每月總預算</b><small>沒有另外設定的月份都用這個</small></span></span>
+          <input type="number" inputMode="numeric" value={defTotal || ""} onChange={(e) => setTotal(e.target.value)} placeholder="未設定" className="budget-input" aria-label="預設每月總預算" />
         </div>
+        <div className="budget-head">
+          <span className="budget-cat"><span className="tb-lbl"><b>{mNum} 月另外設定</b><small>{monthly[month] ? "只套用在這個月，清空就回到預設" : "這個月要多花或少花時再填"}</small></span></span>
+          <input type="number" inputMode="numeric" value={monthly[month] || ""} onChange={(e) => setMonthTotal(e.target.value)} placeholder={defTotal ? `用預設 ${num(defTotal)}` : "未設定"} className={"budget-input" + (monthly[month] ? " custom" : "")} aria-label={`${mNum} 月總預算`} />
+        </div>
+        {otherMonths.length > 0 && <small className="tb-others">其他另外設定的月份：{otherMonths.map(([k, v]) => `${+k.slice(5)} 月 ${num(v)}`).join("、")}</small>}
         {tb ? (
           <>
             <div className="tb-nums">

@@ -492,3 +492,7 @@ em.good { color: var(--good); } em.bad { color: var(--exp); } em.flat { color: v
 .tb-ex small { font-size: 12px; color: var(--faint); line-height: 1.6; }
 .tb-ex .warn-txt { color: var(--gold); }
 .tb-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.tb-lbl { display: grid; gap: 1px; }
+.tb-lbl small { font-size: 11px; font-weight: 400; color: var(--faint); }
+.budget-input.custom { border-color: rgba(224,164,88,0.6); color: var(--gold); }
+.tb-others { font-size: 12px; color: var(--faint); }

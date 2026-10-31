@@ -5,15 +5,22 @@ const PAL = ["#2C6E7F", "#E0A458", "#B5533E", "#7A9E7E", "#8C6A9E", "#5B7C99", "
 const FIXED_CATS = ["房貸", "通訊"]; // 視為固定支出的分類
 
 // ===== 總預算 =====
-// 存在 budgets 裡的兩個保留欄位：__total（每月總額）、__exclude（不算進總預算的分類，預設排除房貸）
+// 存在 budgets 裡的保留欄位：__total（預設每月總額）、__monthly（個別月份的總額，如 {"2026-12": 30000}）、
+// __exclude（不算進總預算的分類，預設排除房貸）
 export const DEFAULT_EXCLUDE = ["房貸"];
 export const catBudgets = (budgets) => Object.entries(budgets || {}).filter(([c, l]) => !c.startsWith("__") && typeof l === "number");
-export function totalBudget(budgets, spentByCat) {
-  const total = +(budgets && budgets.__total) || 0;
+// 某個月的總預算：有個別設定就用個別的，沒有就用預設
+export function monthTotal(budgets, month) {
+  const mo = budgets && budgets.__monthly && typeof budgets.__monthly === "object" ? +budgets.__monthly[month] || 0 : 0;
+  if (mo > 0) return { total: mo, custom: true };
+  return { total: +(budgets && budgets.__total) || 0, custom: false };
+}
+export function totalBudget(budgets, spentByCat, month) {
+  const { total, custom } = monthTotal(budgets, month);
   if (total <= 0) return null;
   const exclude = Array.isArray(budgets.__exclude) ? budgets.__exclude : DEFAULT_EXCLUDE;
   const spent = Object.entries(spentByCat || {}).filter(([c]) => !exclude.includes(c)).reduce((a, [, v]) => a + v, 0);
-  return { total, spent, left: total - spent, pct: (spent / total) * 100, exclude };
+  return { total, custom, spent, left: total - spent, pct: (spent / total) * 100, exclude };
 }
 // 這個月還剩幾天（含今天）；過去的月份回 0，未來的月份回整個月
 export function daysLeftIn(month, today = new Date()) {
@@ -143,7 +150,7 @@ function insights(s, p, budgets, cards, rebateOf) {
       out.push(["good", `支出比上月少 <b>${money(-d)}</b>，主要是${dr}。`]);
     }
   }
-  const tb = totalBudget(budgets, s.byCat);
+  const tb = totalBudget(budgets, s.byCat, s.m);
   if (tb) out.push([tb.left < 0 ? "bad" : tb.pct >= 80 ? "warn" : "good",
     tb.left < 0 ? `總預算 <b>${money(tb.total)}</b>，超支 <b>${money(-tb.left)}</b>（已用 ${tb.pct.toFixed(0)}%）。`
                 : `總預算 <b>${money(tb.total)}</b>，已用 ${tb.pct.toFixed(0)}%，剩 <b>${money(tb.left)}</b>。`]);
