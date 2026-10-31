@@ -478,3 +478,17 @@ em.good { color: var(--good); } em.bad { color: var(--exp); } em.flat { color: v
 
 /* 更多頁底部的版本小字 */
 .app-ver { margin: 4px 0 0; text-align: center; font-size: 11px; color: var(--faint); font-family: Outfit, 'Noto Sans TC', sans-serif; font-variant-numeric: tabular-nums; letter-spacing: .02em; }
+
+/* 總預算 */
+.tb-card { display: grid; gap: 12px; }
+.tb-card .budget-head { margin-bottom: 0; }
+.tb-nums { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.tb-nums > div { display: grid; gap: 2px; min-width: 0; }
+.tb-nums small { font-size: 11px; color: var(--faint); }
+.tb-nums b { font-family: Outfit, sans-serif; font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.tb-nums div:first-child b { color: var(--gold); }
+.tb-nums b.neg { color: var(--exp) !important; }
+.tb-ex { display: grid; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+.tb-ex small { font-size: 12px; color: var(--faint); line-height: 1.6; }
+.tb-ex .warn-txt { color: var(--gold); }
+.tb-chips { display: flex; flex-wrap: wrap; gap: 6px; }

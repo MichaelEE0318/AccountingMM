@@ -4,6 +4,27 @@
 const PAL = ["#2C6E7F", "#E0A458", "#B5533E", "#7A9E7E", "#8C6A9E", "#5B7C99", "#C97B84"];
 const FIXED_CATS = ["房貸", "通訊"]; // 視為固定支出的分類
 
+// ===== 總預算 =====
+// 存在 budgets 裡的兩個保留欄位：__total（每月總額）、__exclude（不算進總預算的分類，預設排除房貸）
+export const DEFAULT_EXCLUDE = ["房貸"];
+export const catBudgets = (budgets) => Object.entries(budgets || {}).filter(([c, l]) => !c.startsWith("__") && typeof l === "number");
+export function totalBudget(budgets, spentByCat) {
+  const total = +(budgets && budgets.__total) || 0;
+  if (total <= 0) return null;
+  const exclude = Array.isArray(budgets.__exclude) ? budgets.__exclude : DEFAULT_EXCLUDE;
+  const spent = Object.entries(spentByCat || {}).filter(([c]) => !exclude.includes(c)).reduce((a, [, v]) => a + v, 0);
+  return { total, spent, left: total - spent, pct: (spent / total) * 100, exclude };
+}
+// 這個月還剩幾天（含今天）；過去的月份回 0，未來的月份回整個月
+export function daysLeftIn(month, today = new Date()) {
+  const [y, m] = month.split("-").map(Number);
+  const dim = new Date(y, m, 0).getDate();
+  const cur = today.getFullYear() * 12 + today.getMonth(), tgt = y * 12 + (m - 1);
+  if (tgt < cur) return 0;
+  if (tgt > cur) return dim;
+  return dim - today.getDate() + 1;
+}
+
 const mk = (d) => (d || "").slice(0, 7);
 const money = (n) => (n < 0 ? "-" : "") + "$" + Math.abs(Math.round(n)).toLocaleString("en-US");
 const sum = (a, f = (x) => x.amount) => a.reduce((s, x) => s + f(x), 0);
@@ -50,13 +71,13 @@ function chart6(transactions, ms, cur, rebateOf) {
   const pts = [];
   data.forEach((d, i) => {
     const x0 = l + gw * i + gw / 2;
-    g += `<rect fill="#2C6E7F" x="${x0 - bw - 2}" y="${y(d.inc)}" width="${bw}" height="${Math.max(0, y(0) - y(d.inc))}" rx="2"><title>${d.m} 收入 ${money(d.inc)}</title></rect>`;
-    g += `<rect fill="#B5533E" x="${x0 + 2}" y="${y(d.exp)}" width="${bw}" height="${Math.max(0, y(0) - y(d.exp))}" rx="2"><title>${d.m} 支出 ${money(d.exp)}</title></rect>`;
+    g += `<rect fill="#2C6E7F" x="${x0 - bw - 2}" y="${y(d.inc)}" width="${bw}" height="${Math.max(0, y(0) - y(d.inc))}" rx="2"><title>${esc(d.m)} 收入 ${money(d.inc)}</title></rect>`;
+    g += `<rect fill="#B5533E" x="${x0 + 2}" y="${y(d.exp)}" width="${bw}" height="${Math.max(0, y(0) - y(d.exp))}" rx="2"><title>${esc(d.m)} 支出 ${money(d.exp)}</title></rect>`;
     g += `<text ${d.m === cur ? 'fill="#2A2E30" font-weight="700"' : 'fill="#8E978F"'} font-size="13" font-family="Roboto Mono, Menlo, monospace" x="${x0}" y="${H - 8}" text-anchor="middle">${+d.m.slice(5)}月</text>`;
     pts.push([x0, y(d.bal)]);
   });
   g += `<polyline fill="none" stroke="#5A7D4E" stroke-width="2.2" points="${pts.map((p) => p.join(",")).join(" ")}"/>`;
-  pts.forEach((p, i) => (g += `<circle fill="#FFFFFF" stroke="#5A7D4E" stroke-width="2" cx="${p[0]}" cy="${p[1]}" r="3.5"><title>${data[i].m} 結餘 ${money(data[i].bal)}</title></circle>`));
+  pts.forEach((p, i) => (g += `<circle fill="#FFFFFF" stroke="#5A7D4E" stroke-width="2" cx="${p[0]}" cy="${p[1]}" r="3.5"><title>${esc(data[i].m)} 結餘 ${money(data[i].bal)}</title></circle>`));
   return `<svg class="mr-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="近六個月收支">${g}</svg>
   <div class="mr-legend"><span><i style="background:#2C6E7F"></i>收入</span><span><i style="background:#B5533E"></i>支出</span><span><i style="background:#5A7D4E"></i>結餘</span></div>`;
 }
@@ -122,8 +143,12 @@ function insights(s, p, budgets, cards, rebateOf) {
       out.push(["good", `支出比上月少 <b>${money(-d)}</b>，主要是${dr}。`]);
     }
   }
-  const over = Object.entries(budgets).filter(([c, l]) => l > 0 && (s.byCat[c] || 0) > l);
-  const near = Object.entries(budgets).filter(([c, l]) => { const v = s.byCat[c] || 0; return l > 0 && v < l && v >= l * 0.8; });
+  const tb = totalBudget(budgets, s.byCat);
+  if (tb) out.push([tb.left < 0 ? "bad" : tb.pct >= 80 ? "warn" : "good",
+    tb.left < 0 ? `總預算 <b>${money(tb.total)}</b>，超支 <b>${money(-tb.left)}</b>（已用 ${tb.pct.toFixed(0)}%）。`
+                : `總預算 <b>${money(tb.total)}</b>，已用 ${tb.pct.toFixed(0)}%，剩 <b>${money(tb.left)}</b>。`]);
+  const over = catBudgets(budgets).filter(([c, l]) => l > 0 && (s.byCat[c] || 0) > l);
+  const near = catBudgets(budgets).filter(([c, l]) => { const v = s.byCat[c] || 0; return l > 0 && v < l && v >= l * 0.8; });
   if (over.length) out.push(["bad", `超出預算：${over.map(([c, l]) => `${esc(c)} 超 ${money(s.byCat[c] - l)}`).join("、")}。`]);
   if (near.length) out.push(["warn", `接近預算上限：${near.map(([c, l]) => `${esc(c)} 已用 ${((s.byCat[c] || 0) / l * 100).toFixed(0)}%`).join("、")}。`]);
   const fixed = FIXED_CATS.reduce((a, c) => a + (s.byCat[c] || 0), 0);
@@ -153,7 +178,7 @@ export function buildMonthlyReport({ transactions = [], cards = [], budgets = {}
   const top5 = [...s.exp].sort((a, b) => b.amount - a.amount).slice(0, 5).map((t) => {
     const card = cards.find((c) => c.id === t.cardId);
     const nt = esc(t.note || "") + (card ? `${t.note ? "，" : ""}${esc(card.name)}` : "");
-    return `<div class="mr-top"><span class="mr-dt mr-num">${t.date.slice(5)}</span><span class="mr-chip">${esc(t.category)}</span><span class="mr-nt">${nt}</span><span class="mr-amt mr-num">${money(t.amount)}</span></div>`;
+    return `<div class="mr-top"><span class="mr-dt mr-num">${esc(t.date.slice(5))}</span><span class="mr-chip">${esc(t.category)}</span><span class="mr-nt">${nt}</span><span class="mr-amt mr-num">${money(t.amount)}</span></div>`;
   }).join("") || '<div class="mr-flat">本月無支出</div>';
   const today = new Date(), gen = `${today.getFullYear()}/${today.getMonth() + 1}/${today.getDate()}`;
 

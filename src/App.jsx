@@ -10,7 +10,7 @@ import {
   MoreHorizontal, ChevronDown, ChevronRight, ChevronLeft, Delete, LogOut, User, Zap, Copy, RefreshCw, Eye, EyeOff,
 } from "lucide-react";
 import { login, logout, watchAuth, cloudLoad, cloudSave } from "./firebase";
-import { buildMonthlyReport } from "./monthlyReport";
+import { buildMonthlyReport, totalBudget, catBudgets, daysLeftIn, DEFAULT_EXCLUDE } from "./monthlyReport";
 import appCss from "./index.css?inline"; // 月報 PDF 自帶樣式，不依賴頁面當下載入的 CSS
 import { watchInbox, removeInbox, inboxEndpoint } from "./inbox";
 import { AnimNum, AnimRing, createSpring, rubber, project, velocityOf } from "./motion";
@@ -201,8 +201,8 @@ async function copyText(text) {
 
 // ===== 版本號：每次改版手動改（例：1.6 → 1.7）=====
 // 1.0 記帳、回饋、差旅、預算　1.1 Google 登入與雲端同步　1.2 出國消費　1.3 月報 PDF
-// 1.4 深色新介面　1.5 捷徑背景記帳（收件匣）　1.6 動態效果（apple-design）
-const APP_VERSION = "1.6";
+// 1.4 深色新介面　1.5 捷徑背景記帳（收件匣）　1.6 動態效果（apple-design）　1.7 總預算
+const APP_VERSION = "1.7";
 // 部署年月：讀 GitHub Pages 回傳的網頁更新時間，不用手動改
 function deployedAt() {
   const d = new Date(document.lastModified);
@@ -690,7 +690,13 @@ function HomeScreen({ transactions, budgets, cards, trips, month, onAdd, goto })
   const left = budgeted.reduce((s, c) => s + Math.max(0, budgets[c] - (spentBy[c] || 0)), 0);
   const budgetTotal = budgeted.reduce((s, c) => s + budgets[c], 0);
   const budgetSpent = budgeted.reduce((s, c) => s + (spentBy[c] || 0), 0);
-  const usedPct = budgetTotal ? budgetSpent / budgetTotal * 100 : 0;
+  const tb = totalBudget(budgets, spentBy);
+  const days = daysLeftIn(month);
+  // 有設總預算就用總預算；沒有的話用「有設上限的分類」加總
+  const heroLeft = tb ? tb.left : left;
+  const usedPct = tb ? tb.pct : budgetTotal ? budgetSpent / budgetTotal * 100 : 0;
+  const showBudget = !!tb || hasBudget;
+  const perDay = tb && days > 0 && tb.left > 0 ? tb.left / days : 0;
   const pend = trips.filter((t) => !t.reimbursed && t.items.length > 0);
   const pendAmt = pend.reduce((s, t) => s + t.items.reduce((a, x) => a + x.amount, 0), 0);
   const mNum = +month.slice(5);
@@ -700,21 +706,22 @@ function HomeScreen({ transactions, budgets, cards, trips, month, onAdd, goto })
       <section className="hero">
         <div className="hero-glow" aria-hidden="true" /><div className="hero-line" aria-hidden="true" />
         <div className="hero-body">
-          <div className="hero-label">{hasBudget ? `${mNum} 月預算還能花` : `${mNum} 月結餘`}</div>
+          <div className="hero-label">{tb ? (tb.left < 0 ? `${mNum} 月已超出總預算` : `${mNum} 月還能花`) : hasBudget ? `${mNum} 月預算還能花` : `${mNum} 月結餘`}</div>
           <div className="hero-row">
-            <div className="hero-num"><span className="cur">NT$</span><AnimNum className={"big" + (!hasBudget && bal < 0 ? " neg" : "")} value={hasBudget ? left : bal} format={num} /></div>
-            {hasBudget && (
+            <div className="hero-num"><span className="cur">NT$</span><AnimNum className={"big" + ((showBudget ? heroLeft : bal) < 0 ? " neg" : "")} value={showBudget ? (tb && tb.left < 0 ? -tb.left : heroLeft) : bal} format={num} /></div>
+            {showBudget && (
               <AnimRing ratio={usedPct / 100} over={usedPct > 100}>
                 <b><AnimNum value={usedPct} format={(x) => Math.round(x) + "%"} /></b><small>已用</small>
               </AnimRing>
             )}
           </div>
           <div className="pills">
-            {hasBudget && <span className="pill"><i style={{ background: bal >= 0 ? "#6FCF8F" : "#F2A48E" }} />結餘 {num(bal)}</span>}
+            {perDay > 0 && <button className="pill" onClick={() => goto("budget")}><i style={{ background: "#8FD0DE" }} />剩 {days} 天，每天可花 {num(perDay)}</button>}
+            {showBudget && <span className="pill"><i style={{ background: bal >= 0 ? "#6FCF8F" : "#F2A48E" }} />結餘 {num(bal)}</span>}
             {pend.length > 0 && <button className="pill" onClick={() => goto("travel")}><i style={{ background: "#E0A458" }} />{pend.length} 趟差旅待報帳</button>}
             <span className="pill"><i style={{ background: "#B99AD6" }} />回饋 {num(rebate)}</span>
           </div>
-          <div className="hero-cap">{hasBudget ? "只計有設預算的分類" : "到「預算」設定分類上限，這裡會改成顯示還能花多少"}</div>
+          <div className="hero-cap">{tb ? `總預算 ${num(tb.total)}，已花 ${num(tb.spent)}${tb.exclude.length ? `（不含${tb.exclude.join("、")}）` : ""}` : hasBudget ? "只計有設預算的分類" : "到「預算」設定總預算，這裡會改成顯示還能花多少"}</div>
         </div>
       </section>
 
@@ -842,6 +849,10 @@ function QuickAdd({ init, cards, budgets, transactions, onSave, onClose }) {
   const spent = transactions.filter((t) => t.type === "expense" && t.category === category && monthKey(t.date) === m).reduce((s, t) => s + t.amount, 0);
   const lim = budgets[category] || 0;
   const after = lim - spent - n;
+  const mSpent = {};
+  transactions.forEach((t) => { if (t.type === "expense" && monthKey(t.date) === m) mSpent[t.category] = (mSpent[t.category] || 0) + t.amount; });
+  const tbNow = totalBudget(budgets, mSpent);
+  const tbAfter = tbNow && !tbNow.exclude.includes(category) ? tbNow.left - n : null;
 
   const press = (k) => {
     setAmt((a) => {
@@ -920,6 +931,9 @@ function QuickAdd({ init, cards, budgets, transactions, onSave, onClose }) {
             ? <div className="amt-sub">記下後{category}剩餘 <b>{num(after)}</b></div>
             : <div className="amt-sub over">記下後{category}會超支 <b>{num(-after)}</b></div>)}
           {type === "expense" && !lim && <div className="amt-sub">{category}本月已花 <b>{num(spent)}</b></div>}
+          {type === "expense" && tbAfter !== null && (tbAfter >= 0
+            ? <div className="amt-sub">記下後總預算還能花 <b>{num(tbAfter)}</b></div>
+            : <div className="amt-sub over">記下後總預算超支 <b>{num(-tbAfter)}</b></div>)}
         </div>
 
         {type === "expense" && (
@@ -1494,11 +1508,56 @@ function Overseas({ overseas, setOverseas, cards, setTransactions }) {
 function Budget({ budgets, setBudgets, transactions, month }) {
   const mtx = transactions.filter((t) => monthKey(t.date) === month && t.type === "expense");
   const setLimit = (cat, val) => setBudgets((p) => ({ ...p, [cat]: +val || 0 }));
+  // 總預算
+  const spentBy = {};
+  mtx.forEach((t) => { spentBy[t.category] = (spentBy[t.category] || 0) + t.amount; });
+  const total = +budgets.__total || 0;
+  const exclude = Array.isArray(budgets.__exclude) ? budgets.__exclude : DEFAULT_EXCLUDE;
+  const tb = totalBudget(budgets, spentBy);
+  const days = daysLeftIn(month);
+  const mNum = +month.slice(5);
+  const setTotal = (val) => setBudgets((p) => ({ ...p, __total: Math.max(0, +val || 0) }));
+  const toggleEx = (c) => setBudgets((p) => {
+    const cur = Array.isArray(p.__exclude) ? p.__exclude : DEFAULT_EXCLUDE;
+    return { ...p, __exclude: cur.includes(c) ? cur.filter((x) => x !== c) : [...cur, c] };
+  });
+  const catSum = CATEGORIES.expense.filter((c) => !exclude.includes(c)).reduce((a, c) => a + (budgets[c] || 0), 0);
+  const tPct = tb ? Math.min(100, tb.pct) : 0;
   return (
     <div className="stack">
       <div className="page-head"><h1>預算</h1></div>
+
+      <section className="card tb-card">
+        <div className="budget-head">
+          <span className="budget-cat"><b>每月總預算</b></span>
+          <input type="number" inputMode="numeric" value={total || ""} onChange={(e) => setTotal(e.target.value)} placeholder="未設定" className="budget-input" aria-label="每月總預算" />
+        </div>
+        {tb ? (
+          <>
+            <div className="tb-nums">
+              <div><small>{tb.left < 0 ? "已超支" : `${mNum} 月還能花`}</small><b className={tb.left < 0 ? "neg" : ""}><AnimNum value={Math.abs(tb.left)} format={num} /></b></div>
+              <div><small>已花</small><b><AnimNum value={tb.spent} format={num} /></b></div>
+              <div><small>{days > 0 ? `剩 ${days} 天，每天可花` : "這個月已結束"}</small><b>{days > 0 && tb.left > 0 ? <AnimNum value={tb.left / days} format={num} /> : "—"}</b></div>
+            </div>
+            <div className="bar"><div className="bar-fill" style={{ width: `${tPct}%`, background: tb.left < 0 ? "#E58A6F" : tb.pct > 80 ? "#E0A458" : "#8FD3AE" }} /></div>
+            <div className={"mono budget-status" + (tb.left < 0 ? " over" : "")}>已用 {tb.pct.toFixed(0)}%</div>
+          </>
+        ) : <div className="hint" style={{ marginTop: 0 }}>設定一個月總共打算花多少，首頁會顯示還能花多少、剩下每天平均可以花多少。</div>}
+        <div className="tb-ex">
+          <small>不算進總預算的分類（點一下切換）</small>
+          <div className="tb-chips">
+            {CATEGORIES.expense.map((c) => {
+              const on = exclude.includes(c);
+              return <button key={c} type="button" className={"pay-chip" + (on ? " on" : "")} aria-pressed={on} onClick={() => toggleEx(c)}>{c}</button>;
+            })}
+          </div>
+          <small>{exclude.length ? `${exclude.join("、")}的支出照常記帳，只是不扣總預算。` : "所有支出都會扣總預算。"}</small>
+          {total > 0 && catSum > total && <small className="warn-txt">下面各分類上限加總 {num(catSum)}，已超過總預算 {num(total)}。</small>}
+        </div>
+      </section>
+
       <div className="card">
-        <div className="hint" style={{ marginTop: 0, marginBottom: 16 }}>設定各分類每月上限。有設上限的分類，首頁會顯示剩餘金額，超支時報表會出現警示。</div>
+        <div className="hint" style={{ marginTop: 0, marginBottom: 16 }}>分類上限（選填）：想個別控制的分類再設，超支時報表會出現警示。</div>
         <div className="budget-list">
           {CATEGORIES.expense.map((cat) => {
             const s = catStyle(cat);
@@ -1756,8 +1815,8 @@ function Reports({ transactions, trips, month, cards, budgets, overseas, setOver
   const di = delta(income, pIncome, true), de = delta(expense, pExpense, false);
   const spentBy = {};
   mtx.forEach((t) => { if (t.type === "expense") spentBy[t.category] = (spentBy[t.category] || 0) + t.amount; });
-  const over = Object.entries(budgets).filter(([c, l]) => l > 0 && (spentBy[c] || 0) > l);
-  const near = Object.entries(budgets).filter(([c, l]) => { const v = spentBy[c] || 0; return l > 0 && v < l && v >= l * 0.8; });
+  const over = catBudgets(budgets).filter(([c, l]) => l > 0 && (spentBy[c] || 0) > l);
+  const near = catBudgets(budgets).filter(([c, l]) => { const v = spentBy[c] || 0; return l > 0 && v < l && v >= l * 0.8; });
   const mNum = +month.slice(5);
 
   // 產生一頁式月報 PDF 並下載（PDF 套件只在按下時才載入，不拖慢 App 開啟速度）
