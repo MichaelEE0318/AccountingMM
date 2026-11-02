@@ -537,3 +537,13 @@ em.good { color: var(--good); } em.bad { color: var(--exp); } em.flat { color: v
 .inbox-skip { flex-shrink: 0; font: inherit; font-size: 12px; color: var(--muted); background: none; border: 1px solid var(--line2); border-radius: 10px; padding: 8px 10px; cursor: pointer; }
 .inbox-hint { font-size: 11.5px; color: var(--faint); line-height: 1.6; }
 @media (prefers-reduced-motion: reduce) { .switch, .switch i { transition: none; } }
+
+/* 刪除旅程確認框 */
+.confirm-del { display: grid; gap: 8px; padding: 12px; border-radius: 14px; background: rgba(229,138,111,0.1); border: 1px solid rgba(229,138,111,0.45); animation: fadeIn .2s ease-out; }
+.confirm-del b { font-size: 14px; color: #F6C3B4; }
+.confirm-del small { font-size: 12.5px; color: var(--muted); line-height: 1.6; }
+.confirm-del-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.danger-solid { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 42px; border-radius: 12px; border: none;
+  background: #C2543F; color: #fff; font: inherit; font-weight: 700; cursor: pointer; transition: scale 180ms cubic-bezier(.2,.8,.2,1); }
+.danger-solid:active { scale: .96; transition-duration: 60ms; }
+@media (prefers-reduced-motion: reduce) { .danger-solid { transition: none; } .danger-solid:active { scale: none; } }

@@ -214,8 +214,8 @@ async function copyText(text) {
 
 // ===== 版本號：每次改版手動改（新功能 1.6 → 1.7，小調整 1.7 → 1.7.1）=====
 // 1.0 記帳、回饋、差旅、預算　1.1 Google 登入與雲端同步　1.2 出國消費　1.3 月報 PDF
-// 1.4 深色新介面　1.5 捷徑背景記帳（收件匣）　1.6 動態效果（apple-design）　1.7 總預算　1.7.1 每月可另設總預算　1.8 記一筆可記到出國旅程　1.8.1 捷徑自動記帳開關
-const APP_VERSION = "1.8.1";
+// 1.4 深色新介面　1.5 捷徑背景記帳（收件匣）　1.6 動態效果（apple-design）　1.7 總預算　1.7.1 每月可另設總預算　1.8 記一筆可記到出國旅程　1.8.1 捷徑自動記帳開關　1.8.2 刪除旅程前確認　1.8.3 已結算旅程不再變動明細
+const APP_VERSION = "1.8.3";
 // 部署年月：讀 GitHub Pages 回傳的網頁更新時間，不用手動改
 function deployedAt() {
   const d = new Date(document.lastModified);
@@ -377,17 +377,7 @@ function LedgerApp({ user }) {
     document.addEventListener("touchstart", noop, { passive: true });
     return () => document.removeEventListener("touchstart", noop);
   }, []);
-  // 記一筆面板選了旅程：存成旅程的一筆消費（跟旅程頁手動加的一樣）；已結算的旅程，同步更新明細那一筆
-  const syncSettled = (trip, items) => {
-    if (!trip.settled) return;
-    const total = items.reduce((a, x) => a + twdCost(x, cards), 0);
-    setTransactions((p) => {
-      const has = p.some((t) => t.refOverseasId === trip.id);
-      if (total <= 0) return p.filter((t) => t.refOverseasId !== trip.id);
-      if (has) return p.map((t) => t.refOverseasId === trip.id ? { ...t, amount: total } : t);
-      return [{ id: uid(), date: trip.end, type: "expense", category: "出國消費", amount: total, note: `出國：${trip.name}`, cardId: "", refOverseasId: trip.id }, ...p];
-    });
-  };
+  // 記一筆面板選了旅程：存成旅程的一筆消費（跟旅程頁手動加的一樣）。只會選到還沒結算的旅程，明細不動
   // 從收件匣逐筆確認記下的：記完就把收件匣那筆刪掉
   const consumeInbox = () => {
     if (!quick || !quick.inboxId) return;
@@ -400,16 +390,12 @@ function LedgerApp({ user }) {
     consumeInbox();
     const items = [...trip.items, item];
     setOverseas((p) => p.map((t) => t.id === tripId ? { ...t, items } : t));
-    syncSettled(trip, items);
     setQuick(null);
     const twd = twdCost(item, cards);
     notify(`已記到${trip.name} ${item.currency} ${item.amount.toLocaleString("en-US")} ≈ NT$${num(twd)}`, 5000, {
       label: "復原",
       fn: () => {
-        const cur = overseas.find((t) => t.id === tripId) || trip;
-        const left = cur.items.filter((x) => x.id !== item.id);
         setOverseas((p) => p.map((t) => t.id === tripId ? { ...t, items: t.items.filter((x) => x.id !== item.id) } : t));
-        syncSettled(cur, left);
         notify("已復原，這筆沒有記下");
       },
     });
@@ -602,8 +588,8 @@ function LedgerApp({ user }) {
         {tab === "budget" && <Budget budgets={budgets} setBudgets={setBudgets} transactions={transactions} month={month} />}
         {tab === "more" && <More user={user} cards={cards} trips={trips} overseas={overseas} transactions={transactions} month={month} goto={goto} settings={settings} />}
         {tab === "cards" && <div className="stack"><SubHead title="信用卡" goto={goto} /><Cards cards={cards} setCards={setCards} transactions={transactions} month={month} /></div>}
-        {tab === "travel" && <div className="stack"><SubHead title="差旅代墊" goto={goto} /><Travel trips={trips} setTrips={setTrips} setTransactions={setTransactions} /></div>}
-        {tab === "overseas" && <div className="stack"><SubHead title="出國消費" goto={goto} /><Overseas overseas={overseas} setOverseas={setOverseas} cards={cards} setTransactions={setTransactions} /></div>}
+        {tab === "travel" && <div className="stack"><SubHead title="差旅代墊" goto={goto} /><Travel trips={trips} setTrips={setTrips} setTransactions={setTransactions} notify={notify} /></div>}
+        {tab === "overseas" && <div className="stack"><SubHead title="出國消費" goto={goto} /><Overseas overseas={overseas} setOverseas={setOverseas} cards={cards} setTransactions={setTransactions} notify={notify} /></div>}
         {tab === "shortcut" && <div className="stack"><SubHead title="捷徑自動記帳" goto={goto} /><ShortcutSettings uid={uid} inboxErr={inboxErr} settings={settings} setSettings={setSettings} cards={cards} notify={notify}
           onTest={() => openFromLink({ key: "", amount: 120, merchant: "全家便利商店（測試）", card: cards[0]?.name || "" }, { skipKey: true })} /></div>}
       </main>
@@ -914,7 +900,7 @@ function QuickAdd({ init, cards, budgets, transactions, overseas = [], onSave, o
   // 旅程模式：旅行期間打開就自動切到那趟（捷徑帶入的是台幣金額，不自動切）
   const [tripId, setTripId] = useState(() => {
     if (init.fromLink || (init.type && init.type !== "expense")) return "";
-    const a = activeTrip(overseas, init.date || todayISO());
+    const a = activeTrip(overseas.filter((t) => !t.settled), init.date || todayISO());
     return a ? a.id : "";
   });
   const [ovType, setOvType] = useState(OVERSEAS_TYPES.includes(init.category) ? init.category : OVERSEAS_TYPES[0]);
@@ -1010,13 +996,13 @@ function QuickAdd({ init, cards, budgets, transactions, overseas = [], onSave, o
   // 旅程選擇：旅行中的排第一，其次未來與最近的，最多 4 趟
   const tripChoices = useMemo(() => {
     const today = todayISO();
-    return [...overseas].sort((a, b) => {
+    return overseas.filter((t) => !t.settled).sort((a, b) => {
       const ra = a.start <= today && today <= a.end ? 0 : 1, rb = b.start <= today && today <= b.end ? 0 : 1;
       if (ra !== rb) return ra - rb;
       return (b.start || "").localeCompare(a.start || "");
     }).slice(0, 4);
   }, [overseas]);
-  const showTripBar = type === "expense" && overseas.length > 0 && (!init.fromLink || !!init.inboxId) && (!!trip || category === "出國消費" || !!activeTrip(overseas, date));
+  const showTripBar = type === "expense" && tripChoices.length > 0 && (!init.fromLink || !!init.inboxId) && (!!trip || category === "出國消費" || !!activeTrip(tripChoices, date));
 
   const n = parseFloat(amt) || 0;
   const validCard = cards.some((c) => c.id === cardId) ? cardId : "";
@@ -1459,7 +1445,31 @@ function Cards({ cards, setCards, transactions, month }) {
 }
 
 // ---------- Travel ----------
-function Travel({ trips, setTrips, setTransactions }) {
+// 刪除整趟行程／旅程前的確認：第一下只展開確認框，第二下才真的刪
+function ConfirmDelete({ label, title, detail, onConfirm }) {
+  const [ask, setAsk] = useState(false);
+  const boxRef = useRef(null);
+  useEffect(() => {
+    if (!ask) return;
+    // 確認框可能被底部選單擋住：捲到畫面中間
+    if (boxRef.current) boxRef.current.scrollIntoView({ block: "center", behavior: "smooth" });
+    const t = setTimeout(() => setAsk(false), 8000); // 8 秒沒動作自動收起
+    return () => clearTimeout(t);
+  }, [ask]);
+  if (!ask) return <button className="danger-btn full" onClick={() => setAsk(true)}><Trash2 size={15} /> {label}</button>;
+  return (
+    <div ref={boxRef} className="confirm-del" role="alertdialog" aria-label={title}>
+      <b>{title}</b>
+      {detail && <small>{detail}</small>}
+      <div className="confirm-del-btns">
+        <button className="ghost-btn" onClick={() => setAsk(false)}>取消</button>
+        <button className="danger-solid" onClick={() => { setAsk(false); onConfirm(); }}><Trash2 size={15} /> 確定刪除</button>
+      </div>
+    </div>
+  );
+}
+
+function Travel({ trips, setTrips, setTransactions, notify }) {
   const [form, setForm] = useState({ name: "", dest: "", start: todayISO(), end: todayISO() });
   const [expandedId, setExpandedId] = useState(null);
   const [item, setItem] = useState({ date: todayISO(), type: "交通", amount: "", note: "" });
@@ -1476,7 +1486,18 @@ function Travel({ trips, setTrips, setTransactions }) {
     setItem((i) => ({ ...i, amount: "", note: "" }));
   };
   const removeItem = (tripId, itemId) => setTrips((p) => p.map((t) => t.id === tripId ? { ...t, items: t.items.filter((x) => x.id !== itemId) } : t));
-  const removeTrip = (id) => setTrips((p) => p.filter((t) => t.id !== id));
+  // 刪除行程：只刪行程本身，明細裡已報帳的那筆收入不動；6 秒內可以復原
+  const removeTrip = (trip) => {
+    const idx = trips.findIndex((t) => t.id === trip.id);
+    setTrips((p) => p.filter((t) => t.id !== trip.id));
+    notify(`已刪除行程「${trip.name}」`, 6000, {
+      label: "復原",
+      fn: () => {
+        setTrips((p) => { if (p.some((t) => t.id === trip.id)) return p; const a = [...p]; a.splice(Math.min(idx, a.length), 0, trip); return a; });
+        notify("已復原行程");
+      },
+    });
+  };
 
   const markReimbursed = (trip) => {
     const total = trip.items.reduce((s, x) => s + x.amount, 0);
@@ -1549,7 +1570,9 @@ function Travel({ trips, setTrips, setTransactions }) {
                 )}
                 <div className="trip-actions">
                   <button className={"full " + (trip.reimbursed ? "ghost-btn" : "green-btn")} onClick={() => markReimbursed(trip)}><Check size={15} /> {trip.reimbursed ? "取消報帳（沖銷收入）" : "標記已報帳並記入收入"}</button>
-                  <button className="danger-btn full" onClick={() => removeTrip(trip.id)}><Trash2 size={15} /> 刪除行程</button>
+                  <ConfirmDelete label="刪除行程" title={`刪除「${trip.name}」？`}
+                    detail={`裡面的 ${trip.items.length} 筆代墊會一起刪除${trip.reimbursed ? "；明細裡已記的報帳收入會保留" : ""}。刪除後 6 秒內可以按「復原」。`}
+                    onConfirm={() => removeTrip(trip)} />
                 </div>
               </div>
             )}
@@ -1576,7 +1599,7 @@ function overseasRebate(item, cards) {
   return Math.round(twdCost(item, cards) * (card.overseasRate || 0) / 100);
 }
 
-function Overseas({ overseas, setOverseas, cards, setTransactions }) {
+function Overseas({ overseas, setOverseas, cards, setTransactions, notify }) {
   const [form, setForm] = useState({ name: "", country: "", currency: "USD", start: todayISO(), end: todayISO(), budget: "" });
   const [expandedId, setExpandedId] = useState(null);
   const [item, setItem] = useState({ date: todayISO(), type: "餐飲", amount: "", note: "", cardId: "", rate: "" });
@@ -1589,7 +1612,18 @@ function Overseas({ overseas, setOverseas, cards, setTransactions }) {
     setOverseas((p) => [t, ...p]); setExpandedId(t.id);
     setForm({ name: "", country: "", currency: "USD", start: todayISO(), end: todayISO(), budget: "" });
   };
-  const removeTrip = (id) => setOverseas((p) => p.filter((t) => t.id !== id));
+  // 刪除旅程：只刪旅程本身，明細裡已結算的那筆支出不動；6 秒內可以復原
+  const removeTrip = (trip) => {
+    const idx = overseas.findIndex((t) => t.id === trip.id);
+    setOverseas((p) => p.filter((t) => t.id !== trip.id));
+    notify(`已刪除旅程「${trip.name}」`, 6000, {
+      label: "復原",
+      fn: () => {
+        setOverseas((p) => { if (p.some((t) => t.id === trip.id)) return p; const a = [...p]; a.splice(Math.min(idx, a.length), 0, trip); return a; });
+        notify("已復原旅程");
+      },
+    });
+  };
 
   // 抓即時匯率填進「單筆匯率」
   const grabRate = async (currency) => {
@@ -1725,7 +1759,9 @@ function Overseas({ overseas, setOverseas, cards, setTransactions }) {
 
                 <div className="trip-actions">
                   <button className={"full " + (trip.settled ? "ghost-btn" : "green-btn")} onClick={() => settle(trip)}><Check size={15} /> {trip.settled ? "取消結算（沖銷支出）" : "標記已結算並記入收支"}</button>
-                  <button className="danger-btn full" onClick={() => removeTrip(trip.id)}><Trash2 size={15} /> 刪除旅程</button>
+                  <ConfirmDelete label="刪除旅程" title={`刪除「${trip.name}」？`}
+                    detail={`裡面的 ${trip.items.length} 筆消費會一起刪除${trip.settled ? "；明細裡已結算的那筆支出會保留" : ""}。刪除後 6 秒內可以按「復原」。`}
+                    onConfirm={() => removeTrip(trip)} />
                 </div>
               </div>
             )}
