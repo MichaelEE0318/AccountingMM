@@ -34,6 +34,19 @@ const monthKey = (d) => (d || "").slice(0, 7);
 const todayISO = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
 
 // 即時匯率：抓 1 外幣 = ? TWD。免費 API，失敗時回 null 讓使用者手動填
+// 同一個幣別 30 分鐘內不重抓（記一筆面板每次打開都會用到）
+const rateCache = new Map();
+async function cachedRate(currency) {
+  const hit = rateCache.get(currency);
+  if (hit && Date.now() - hit.at < 30 * 60 * 1000) return hit;
+  const r = await fetchRate(currency);
+  if (!r) return null;
+  const v = { rate: r, at: Date.now() };
+  rateCache.set(currency, v);
+  return v;
+}
+// 今天（或指定日期）正在進行的旅程
+const activeTrip = (overseas, date) => (overseas || []).find((t) => t.start && t.end && t.start <= date && date <= t.end);
 async function fetchRate(currency) {
   if (currency === "TWD") return 1;
   try {
@@ -201,8 +214,8 @@ async function copyText(text) {
 
 // ===== 版本號：每次改版手動改（新功能 1.6 → 1.7，小調整 1.7 → 1.7.1）=====
 // 1.0 記帳、回饋、差旅、預算　1.1 Google 登入與雲端同步　1.2 出國消費　1.3 月報 PDF
-// 1.4 深色新介面　1.5 捷徑背景記帳（收件匣）　1.6 動態效果（apple-design）　1.7 總預算　1.7.1 每月可另設總預算
-const APP_VERSION = "1.7.1";
+// 1.4 深色新介面　1.5 捷徑背景記帳（收件匣）　1.6 動態效果（apple-design）　1.7 總預算　1.7.1 每月可另設總預算　1.8 記一筆可記到出國旅程　1.8.1 捷徑自動記帳開關
+const APP_VERSION = "1.8.1";
 // 部署年月：讀 GitHub Pages 回傳的網頁更新時間，不用手動改
 function deployedAt() {
   const d = new Date(document.lastModified);
@@ -364,7 +377,45 @@ function LedgerApp({ user }) {
     document.addEventListener("touchstart", noop, { passive: true });
     return () => document.removeEventListener("touchstart", noop);
   }, []);
+  // 記一筆面板選了旅程：存成旅程的一筆消費（跟旅程頁手動加的一樣）；已結算的旅程，同步更新明細那一筆
+  const syncSettled = (trip, items) => {
+    if (!trip.settled) return;
+    const total = items.reduce((a, x) => a + twdCost(x, cards), 0);
+    setTransactions((p) => {
+      const has = p.some((t) => t.refOverseasId === trip.id);
+      if (total <= 0) return p.filter((t) => t.refOverseasId !== trip.id);
+      if (has) return p.map((t) => t.refOverseasId === trip.id ? { ...t, amount: total } : t);
+      return [{ id: uid(), date: trip.end, type: "expense", category: "出國消費", amount: total, note: `出國：${trip.name}`, cardId: "", refOverseasId: trip.id }, ...p];
+    });
+  };
+  // 從收件匣逐筆確認記下的：記完就把收件匣那筆刪掉
+  const consumeInbox = () => {
+    if (!quick || !quick.inboxId) return;
+    dropLocalInbox(quick.inboxId);
+    removeInbox(uid, quick.inboxId).catch((e) => console.error(e));
+  };
+  const saveTripItem = (tripId, item) => {
+    const trip = overseas.find((t) => t.id === tripId);
+    if (!trip) return;
+    consumeInbox();
+    const items = [...trip.items, item];
+    setOverseas((p) => p.map((t) => t.id === tripId ? { ...t, items } : t));
+    syncSettled(trip, items);
+    setQuick(null);
+    const twd = twdCost(item, cards);
+    notify(`已記到${trip.name} ${item.currency} ${item.amount.toLocaleString("en-US")} ≈ NT$${num(twd)}`, 5000, {
+      label: "復原",
+      fn: () => {
+        const cur = overseas.find((t) => t.id === tripId) || trip;
+        const left = cur.items.filter((x) => x.id !== item.id);
+        setOverseas((p) => p.map((t) => t.id === tripId ? { ...t, items: t.items.filter((x) => x.id !== item.id) } : t));
+        syncSettled(cur, left);
+        notify("已復原，這筆沒有記下");
+      },
+    });
+  };
   const saveQuick = (tx) => {
+    consumeInbox();
     setTransactions((p) => [tx, ...p]);
     setQuick(null);
     setMonth(monthKey(tx.date));
@@ -422,12 +473,38 @@ function LedgerApp({ user }) {
   const inboxBusy = useRef(false);
   const inboxQueue = useRef(null);
   const [inboxErr, setInboxErr] = useState("");
+  // 自動入帳開關（預設開）：關掉時收件匣的交易先留著，首頁列出來讓你逐筆確認
+  const autoInbox = settings.autoInbox !== false;
+  const autoRef = useRef(autoInbox);
+  autoRef.current = autoInbox;
+  const latestInbox = useRef([]);
+  const [pendingInbox, setPendingInbox] = useState([]);
+  const handleRef = useRef(null);
   useEffect(() => {
     if (syncing) return;
-    const handle = async (items) => {
+    const handle = async (items, force = false) => {
       if (inboxBusy.current) { inboxQueue.current = items; return; }
       inboxBusy.current = true;
       try {
+        // 關閉自動入帳：只處理測試投遞與壞資料，其他留在收件匣等你確認
+        if (!autoRef.current && !force) {
+          const keep = [], drop = [];
+          let pings = 0, bad = 0;
+          for (const it of items) {
+            if (txRef.current.some((t) => t.id === "ib_" + it.id)) { drop.push(it.id); continue; }
+            const r = inboxToTx(it, txRef.current, cardsRef.current);
+            if (r.kind === "tx") keep.push(it);
+            else { drop.push(it.id); if (r.kind === "ping") pings++; else bad++; }
+          }
+          setPendingInbox(keep.sort((a, b) => (b.at?.seconds || 0) - (a.at?.seconds || 0)));
+          await Promise.all(drop.map((id) => removeInbox(uid, id).catch((e) => console.error("刪除收件匣失敗", id, e))));
+          const msg = [];
+          if (bad) msg.push(`${bad} 筆金額無法辨識，已略過`);
+          if (pings) msg.push("收到捷徑的測試投遞，連線正常");
+          if (msg.length) notify(msg.join("；"), 4500);
+          return;
+        }
+        setPendingInbox([]);
         let list = txRef.current;
         const added = [], done = [];
         let pings = 0, bad = 0, dups = 0;
@@ -460,10 +537,42 @@ function LedgerApp({ user }) {
         if (next) handle(next);
       }
     };
-    const stop = watchInbox(uid, (items) => { setInboxErr(""); if (items.length) handle(items); },
-      (e) => { console.error("收件匣監聽失敗", e); setInboxErr(e?.code || "error"); });
+    handleRef.current = handle;
+    const stop = watchInbox(uid, (items) => {
+      setInboxErr(""); latestInbox.current = items;
+      if (items.length) handle(items); else setPendingInbox([]);
+    }, (e) => { console.error("收件匣監聽失敗", e); setInboxErr(e?.code || "error"); });
     return stop;
   }, [uid, syncing]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 開關切換時，用目前收件匣重新處理一次（打開自動 → 全部記進明細；關掉 → 列成待確認）
+  useEffect(() => {
+    if (syncing || !handleRef.current) return;
+    if (latestInbox.current.length) handleRef.current(latestInbox.current);
+    else setPendingInbox([]);
+  }, [autoInbox]); // eslint-disable-line react-hooks/exhaustive-deps
+  const importAllInbox = () => { if (handleRef.current && latestInbox.current.length) handleRef.current(latestInbox.current, true); };
+  // 先從畫面與暫存移除（不等雲端回應），避免重複處理
+  const dropLocalInbox = (id) => {
+    latestInbox.current = latestInbox.current.filter((x) => x.id !== id);
+    setPendingInbox((p) => p.filter((x) => x.id !== id));
+  };
+  const skipInbox = (id) => { dropLocalInbox(id); removeInbox(uid, id).catch((e) => console.error(e)); notify("已略過這筆，不會記帳"); };
+  // 逐筆確認：打開記一筆面板，帶好金額、商店、卡片、日期
+  const openInboxItem = (it) => {
+    const r = inboxToTx(it, transactions, cards);
+    if (r.kind !== "tx") return;
+    const t = r.tx;
+    const g = guessCategory(t.note, transactions);
+    setQuick({
+      type: "expense", category: t.category, guessBy: g.by, amount: t.amount, note: t.note, date: t.date,
+      cardId: t.cardId, cardText: cleanCardText(decodeSafe(it.card)), src: "notify", fromLink: true, inboxId: it.id,
+      dupNote: t.dup ? `${+t.date.slice(5, 7)}/${+t.date.slice(8)} 已經有一筆同金額的支出，可能重複，確認不是同一筆再記下` : "",
+    });
+  };
+  const pendingView = useMemo(() => pendingInbox.map((it) => {
+    const r = inboxToTx(it, transactions, cards);
+    return r.kind === "tx" ? { it, tx: r.tx } : null;
+  }).filter(Boolean), [pendingInbox, transactions, cards]);
 
   const navActive = ["cards", "travel", "overseas", "shortcut"].includes(tab) ? "more" : tab;
 
@@ -485,7 +594,8 @@ function LedgerApp({ user }) {
       </header>
 
       <main className="content">
-        {tab === "home" && <HomeScreen transactions={transactions} budgets={budgets} cards={cards} trips={trips} month={month} onAdd={setQuick} goto={goto} />}
+        {tab === "home" && <HomeScreen transactions={transactions} budgets={budgets} cards={cards} trips={trips} month={month} onAdd={setQuick} goto={goto}
+          pending={pendingView} onOpenInbox={openInboxItem} onSkipInbox={skipInbox} onImportAll={importAllInbox} />}
         {tab === "ledger" && <Ledger transactions={transactions} setTransactions={setTransactions} month={month} cards={cards} notify={notify} fresh={fresh} />}
         {tab === "reports" && <Reports transactions={transactions} trips={trips} month={month} cards={cards} budgets={budgets} overseas={overseas} setOverseas={setOverseas}
           setTransactions={setTransactions} setTrips={setTrips} setCards={setCards} setBudgets={setBudgets} />}
@@ -507,7 +617,7 @@ function LedgerApp({ user }) {
         ))}
       </nav>
 
-      {quick && <QuickAdd init={quick} cards={cards} budgets={budgets} transactions={transactions} onSave={saveQuick} onClose={() => setQuick(null)} />}
+      {quick && <QuickAdd init={quick} cards={cards} budgets={budgets} transactions={transactions} overseas={overseas} onSave={saveQuick} onSaveTrip={saveTripItem} onClose={() => setQuick(null)} />}
       {toast && (
         <div key={toast.key} className={"toast" + (toast.action ? " has-act" : "")} role="status">
           <span>{toast.msg}</span>
@@ -550,11 +660,18 @@ function ShortcutSettings({ uid, settings, setSettings, cards, notify, onTest, i
     <>
       <div className="card">
         <div className="hint" style={{ marginTop: 0, lineHeight: 1.8 }}>
-          兩種用法，可以並存：<br />
-          <b style={{ color: "#F2EEE6" }}>背景記帳（收件匣）</b>：刷卡後捷徑在背景把交易丟進你的收件匣，不跳出 Safari；下次打開網頁自動記進明細，標「自動」，分類可再改。<br />
-          <b style={{ color: "#F2EEE6" }}>打開確認</b>：捷徑打開這個網頁並填好，你按「記下」才存。
+          捷徑在背景把刷卡交易送進收件匣，不會跳出 Safari。下面的開關決定送來的交易要<b style={{ color: "#F2EEE6" }}>直接記帳</b>，還是先放在首頁<b style={{ color: "#F2EEE6" }}>等你確認</b>。
         </div>
       </div>
+
+      <section className="panel">
+        <button type="button" className="toggle-row" role="switch" aria-checked={settings.autoInbox !== false}
+          onClick={() => { const on = settings.autoInbox === false; setSettings((p) => ({ ...p, autoInbox: on })); notify(on ? "已開啟：捷徑帶入的交易會自動記進明細" : "已關閉：捷徑帶入的交易先放在首頁等你確認"); }}>
+          <span className="list-txt"><b>自動記進明細</b>
+            <small>{settings.autoInbox !== false ? "開：捷徑送來的交易直接記帳，標「自動」，分類可以再改" : "關：先列在首頁「待確認」，你確認分類後才記帳"}</small></span>
+          <span className={"switch" + (settings.autoInbox !== false ? " on" : "")} aria-hidden="true"><i /></span>
+        </button>
+      </section>
 
       <section className="panel">
         <div className="panel-head"><h2>捷徑金鑰</h2></div>
@@ -677,7 +794,7 @@ function Empty({ text }) { return <div className="empty">{text}</div>; }
 function Field({ label, children }) { return <label className="field"><span>{label}</span>{children}</label>; }
 
 // ---------- 記一筆（首頁）----------
-function HomeScreen({ transactions, budgets, cards, trips, month, onAdd, goto }) {
+function HomeScreen({ transactions, budgets, cards, trips, month, onAdd, goto, pending = [], onOpenInbox, onSkipInbox, onImportAll }) {
   const mtx = useMemo(() => transactions.filter((t) => monthKey(t.date) === month), [transactions, month]);
   const spentBy = {};
   mtx.forEach((t) => { if (t.type === "expense") spentBy[t.category] = (spentBy[t.category] || 0) + t.amount; });
@@ -725,6 +842,30 @@ function HomeScreen({ transactions, budgets, cards, trips, month, onAdd, goto })
         </div>
       </section>
 
+      {pending.length > 0 && (
+        <section className="inbox-card" aria-label="捷徑帶入，待確認">
+          <div className="inbox-head">
+            <span><Zap size={15} /><b>捷徑帶入 {pending.length} 筆待確認</b></span>
+            {pending.length > 1 && <button type="button" className="inbox-all" onClick={onImportAll}>全部記下</button>}
+          </div>
+          {pending.map(({ it, tx }) => {
+            const s = catStyle(tx.category);
+            return (
+              <div key={it.id} className="inbox-row">
+                <button type="button" className="inbox-main" onClick={() => onOpenInbox(it)} aria-label={`確認 ${tx.note || tx.category} ${num(tx.amount)}`}>
+                  <span className="tx-ico sm" style={{ background: s.bg, color: s.fg }}><s.Icon size={14} /></span>
+                  <span className="inbox-txt"><b>{tx.note || "（沒有商店名稱）"}{tx.dup && <em className="src-tag warn">可能重複</em>}</b>
+                    <small>{tx.paidAt ? tx.paidAt.slice(5).replace("-", "/") : ""}・{tx.category}・{cardName(tx.cardId, cards) || "卡片未對到"}</small></span>
+                  <span className="inbox-amt">{num(tx.amount)}</span>
+                </button>
+                <button type="button" className="inbox-skip" onClick={() => onSkipInbox(it.id)} aria-label="略過這筆">略過</button>
+              </div>
+            );
+          })}
+          <small className="inbox-hint">點一筆確認分類後記下；不想記的按略過。要恢復自動記帳，到「更多 → 捷徑自動記帳」打開開關。</small>
+        </section>
+      )}
+
       <div className="sec-head"><h2>這筆花在哪裡？</h2><span>點分類開始記帳</span></div>
       <div className="tiles">
         {CATEGORIES.expense.map((c) => {
@@ -768,8 +909,17 @@ function HomeScreen({ transactions, budgets, cards, trips, month, onAdd, goto })
 
 // ---------- 記一筆面板：選分類 → 打金額 → 記下 ----------
 const KEYS_PAD = ["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0", "del"];
-function QuickAdd({ init, cards, budgets, transactions, onSave, onClose }) {
+function QuickAdd({ init, cards, budgets, transactions, overseas = [], onSave, onSaveTrip, onClose }) {
   const [type, setType] = useState(init.type || "expense");
+  // 旅程模式：旅行期間打開就自動切到那趟（捷徑帶入的是台幣金額，不自動切）
+  const [tripId, setTripId] = useState(() => {
+    if (init.fromLink || (init.type && init.type !== "expense")) return "";
+    const a = activeTrip(overseas, init.date || todayISO());
+    return a ? a.id : "";
+  });
+  const [ovType, setOvType] = useState(OVERSEAS_TYPES.includes(init.category) ? init.category : OVERSEAS_TYPES[0]);
+  const [rate, setRate] = useState("");
+  const [rateInfo, setRateInfo] = useState(""); // 匯率來源說明
   const [category, setCategory] = useState(init.category || CATEGORIES[init.type || "expense"][0]);
   const [amt, setAmt] = useState(init.amount ? String(init.amount) : "");
   const [cardId, setCardId] = useState(() => {
@@ -841,6 +991,33 @@ function QuickAdd({ init, cards, budgets, transactions, onSave, onClose }) {
     if (landing > vh() * 0.35) dismiss(onClose, v); else ySp.current.to(0, v);
   };
 
+  const trip = type === "expense" ? overseas.find((t) => t.id === tripId) : null;
+  // 換旅程就抓該幣別即時匯率
+  useEffect(() => {
+    if (!trip) return;
+    let alive = true;
+    setRate(""); setRateInfo("抓取即時匯率中…");
+    cachedRate(trip.currency).then((r) => {
+      if (!alive) return;
+      if (r) {
+        setRate(String(+r.rate.toFixed(r.rate < 0.1 ? 5 : 4)));
+        const d = new Date(r.at);
+        setRateInfo(`即時匯率 ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")} 更新`);
+      } else setRateInfo("抓不到匯率，請手動輸入");
+    });
+    return () => { alive = false; };
+  }, [trip && trip.id, trip && trip.currency]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 旅程選擇：旅行中的排第一，其次未來與最近的，最多 4 趟
+  const tripChoices = useMemo(() => {
+    const today = todayISO();
+    return [...overseas].sort((a, b) => {
+      const ra = a.start <= today && today <= a.end ? 0 : 1, rb = b.start <= today && today <= b.end ? 0 : 1;
+      if (ra !== rb) return ra - rb;
+      return (b.start || "").localeCompare(a.start || "");
+    }).slice(0, 4);
+  }, [overseas]);
+  const showTripBar = type === "expense" && overseas.length > 0 && (!init.fromLink || !!init.inboxId) && (!!trip || category === "出國消費" || !!activeTrip(overseas, date));
+
   const n = parseFloat(amt) || 0;
   const validCard = cards.some((c) => c.id === cardId) ? cardId : "";
   const card = cards.find((c) => c.id === validCard);
@@ -863,9 +1040,21 @@ function QuickAdd({ init, cards, budgets, transactions, onSave, onClose }) {
       return (a === "0" ? "" : a) + k;
     });
   };
-  const switchType = (tp) => { if (tp === type) return; setType(tp); setCategory(CATEGORIES[tp][0]); };
+  const switchType = (tp) => { if (tp === type) return; setType(tp); setCategory(CATEGORIES[tp][0]); if (tp !== "expense") setTripId(""); };
+  const rateN = parseFloat(rate) || 0;
+  const tripItem = trip ? { amount: n, rate: rateN, cardId: validCard } : null;
+  const tripTwd = trip && n > 0 && rateN > 0 ? twdCost(tripItem, cards) : 0;
+  const tripReb = trip && n > 0 && rateN > 0 ? overseasRebate(tripItem, cards) : 0;
+  const tripCard = trip && card ? card : null;
   const save = () => {
     if (n <= 0 || closing.current) return;
+    if (trip) {
+      if (rateN <= 0) return;
+      const item = { id: uid(), date, type: ovType, amount: n, rate: rateN, currency: trip.currency, cardId: validCard, note: note.trim() };
+      try { localStorage.setItem("ledger:lastCard", validCard); } catch { /* 無痕模式可能無法寫入 */ }
+      dismiss(() => onSaveTrip(trip.id, item));
+      return;
+    }
     let dup = false;
     if (init.fromLink && type === "expense") {
       const me = { date, amount: n };
@@ -908,11 +1097,43 @@ function QuickAdd({ init, cards, budgets, transactions, onSave, onClose }) {
           <div className="link-banner">
             <Zap size={16} />
             <span>
-              <b>來自捷徑自動帶入，請確認後再記下</b>
+              <b>{init.inboxId ? "收件匣待確認的一筆，確認後記下" : "來自捷徑自動帶入，請確認後再記下"}</b>
               <small>{init.note ? `分類依${init.guessBy}猜測` : "通知裡沒有商店名稱，請選分類"}{init.cardText && !init.cardId ? `；卡片「${init.cardText}」沒有對應到你設定的卡，請手動選擇` : ""}{!init.amount ? "；沒有抓到金額，請自己輸入" : ""}</small>
             </span>
           </div>
         )}
+        {showTripBar && (
+          <div className={"trip-bar" + (trip ? " on" : "")}>
+            <div className="trip-bar-top">
+              <Plane size={15} />
+              <b>{trip ? trip.name : "要記到哪一趟旅程？"}</b>
+              {trip && <span className="trip-live">{trip.start <= todayISO() && todayISO() <= trip.end
+                ? `旅行中 · 第 ${Math.round((new Date(todayISO() + "T00:00:00") - new Date(trip.start + "T00:00:00")) / 86400000) + 1} 天`
+                : `${trip.start.slice(5).replace("-", "/")} ~ ${trip.end.slice(5).replace("-", "/")}`}</span>}
+            </div>
+            <div className="trip-chips" role="group" aria-label="記到哪一趟旅程">
+              {tripChoices.map((t) => (
+                <button key={t.id} type="button" className={"pay-chip" + (tripId === t.id ? " on" : "")} aria-pressed={tripId === t.id} onClick={() => setTripId(t.id)}>
+                  {t.name} {t.currency}
+                </button>
+              ))}
+              <button type="button" className={"pay-chip" + (!trip ? " on" : "")} aria-pressed={!trip} onClick={() => setTripId("")}>不屬於旅程</button>
+            </div>
+          </div>
+        )}
+
+        {trip ? (
+          <div className="cat-scroll">
+            {OVERSEAS_TYPES.map((c) => {
+              const on = c === ovType;
+              return (
+                <button key={c} className={"cat-chip" + (on ? " on trip" : "")} aria-pressed={on} onClick={() => setOvType(c)}>
+                  <Globe size={14} color="#7FCAD4" />{c}
+                </button>
+              );
+            })}
+          </div>
+        ) : (
         <div className="cat-scroll">
           {CATEGORIES[type].map((c) => {
             const s = catStyle(c); const on = c === category;
@@ -924,33 +1145,44 @@ function QuickAdd({ init, cards, budgets, transactions, onSave, onClose }) {
             );
           })}
         </div>
+        )}
 
         <div className="amt-area">
-          <div className="amt"><span className="cur">NT$</span><span className="big">{amtText}</span></div>
-          {type === "expense" && lim > 0 && (after >= 0
+          <div className="amt"><span className={"cur" + (trip ? " trip" : "")}>{trip ? trip.currency : "NT$"}</span><span className="big">{amtText}</span></div>
+          {trip && (
+            <div className="trip-conv">
+              <div>≈ <b>NT$ {num(tripTwd)}</b>{tripCard && <span>（含海外手續費 {tripCard.fxFee ?? 1.5}%）</span>}</div>
+              <label className="trip-rate">
+                <span>1 {trip.currency} =</span>
+                <input type="number" inputMode="decimal" value={rate} onChange={(e) => setRate(e.target.value)} placeholder="匯率" aria-label={`${trip.currency} 對台幣匯率`} />
+                <span>TWD · {rateInfo}</span>
+              </label>
+            </div>
+          )}
+          {!trip && type === "expense" && lim > 0 && (after >= 0
             ? <div className="amt-sub">記下後{category}剩餘 <b>{num(after)}</b></div>
             : <div className="amt-sub over">記下後{category}會超支 <b>{num(-after)}</b></div>)}
-          {type === "expense" && !lim && <div className="amt-sub">{category}本月已花 <b>{num(spent)}</b></div>}
-          {type === "expense" && tbAfter !== null && (tbAfter >= 0
+          {!trip && type === "expense" && !lim && <div className="amt-sub">{category}本月已花 <b>{num(spent)}</b></div>}
+          {!trip && type === "expense" && tbAfter !== null && (tbAfter >= 0
             ? <div className="amt-sub">記下後總預算還能花 <b>{num(tbAfter)}</b></div>
             : <div className="amt-sub over">記下後總預算超支 <b>{num(-tbAfter)}</b></div>)}
         </div>
 
         {type === "expense" && (
           <div className="pay">
-            <div className="pay-head"><span>付款方式</span>{card && <span>預估回饋 <b>+{num(rebate)}</b></span>}</div>
+            <div className="pay-head"><span>付款方式</span>{card && (trip ? <span>海外回饋 <b>+{num(tripReb)}</b></span> : <span>預估回饋 <b>+{num(rebate)}</b></span>)}</div>
             <div className="pay-chips">
               <button className={"pay-chip" + (!validCard ? " on" : "")} aria-pressed={!validCard} onClick={() => setCardId("")}>現金</button>
               {cards.map((c) => (
                 <button key={c.id} className={"pay-chip" + (validCard === c.id ? " on" : "")} aria-pressed={validCard === c.id} onClick={() => setCardId(c.id)}>
-                  {c.name}{c.rate ? ` ${c.rate}%` : ""}
+                  {c.name}{trip ? (c.overseasRate ? ` 海外${c.overseasRate}%` : "") : (c.rate ? ` ${c.rate}%` : "")}
                 </button>
               ))}
             </div>
           </div>
         )}
 
-        <label className="note-row"><span>備註</span><input value={note} onChange={(e) => setNote(e.target.value)} placeholder={type === "expense" ? "例如：午餐便當" : "例如：九月薪資"} /></label>
+        <label className="note-row"><span>備註</span><input value={note} onChange={(e) => setNote(e.target.value)} placeholder={trip ? "例如：一蘭拉麵" : type === "expense" ? "例如：午餐便當" : "例如：九月薪資"} /></label>
 
         <div className="keypad">
           {KEYS_PAD.map((k) => (
@@ -958,7 +1190,7 @@ function QuickAdd({ init, cards, budgets, transactions, onSave, onClose }) {
           ))}
         </div>
 
-        <button className="save-btn" disabled={n <= 0} onClick={save}>記下</button>
+        <button className="save-btn" disabled={n <= 0 || (trip && rateN <= 0)} onClick={save}>{trip ? `記到${trip.name}` : "記下"}</button>
       </div>
     </div>
     </>

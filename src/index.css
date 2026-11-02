@@ -496,3 +496,44 @@ em.good { color: var(--good); } em.bad { color: var(--exp); } em.flat { color: v
 .tb-lbl small { font-size: 11px; font-weight: 400; color: var(--faint); }
 .budget-input.custom { border-color: rgba(224,164,88,0.6); color: var(--gold); }
 .tb-others { font-size: 12px; color: var(--faint); }
+
+/* 記一筆：旅程模式 */
+.trip-bar { display: grid; gap: 8px; padding: 11px 12px; border-radius: 16px; background: var(--s1); border: 1px solid var(--line); }
+.trip-bar.on { background: #17292C; border-color: rgba(127,202,212,0.3); }
+.trip-bar-top { display: flex; align-items: center; gap: 8px; color: #7FCAD4; font-size: 13px; min-width: 0; }
+.trip-bar-top b { color: var(--text); font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.trip-live { margin-left: auto; flex-shrink: 0; font-size: 11px; padding: 2px 8px; border-radius: 999px; background: rgba(127,202,212,0.15); color: #7FCAD4; }
+.trip-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.trip-bar .pay-chip { background: rgba(0,0,0,0.25); }
+.trip-bar .pay-chip.on { background: #ECE5D6; }
+.cat-chip.on.trip { background: #17292C; border-color: #7FCAD4; color: var(--text); }
+.amt .cur.trip { color: #7FCAD4; }
+.trip-conv { display: grid; gap: 6px; justify-items: center; text-align: center; font-size: 13px; color: var(--muted); }
+.trip-conv b { font-family: Outfit, sans-serif; font-size: 17px; color: var(--text); }
+.trip-conv span { font-size: 12px; color: var(--faint); }
+.trip-rate { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: center; }
+.trip-rate input { width: 92px; padding: 5px 8px; border-radius: 9px; border: 1px solid var(--line2); background: var(--s2); color: var(--text);
+  font-family: Outfit, sans-serif; font-size: 13px; text-align: right; }
+
+/* 自動記帳開關 */
+.toggle-row { display: flex; align-items: center; gap: 12px; width: 100%; background: none; border: none; color: var(--text); text-align: left; padding: 0; cursor: pointer; font: inherit; }
+.toggle-row .list-txt { flex: 1; min-width: 0; }
+.switch { position: relative; width: 50px; height: 30px; border-radius: 15px; background: var(--s3); border: 1px solid var(--line2); flex-shrink: 0; transition: background-color .2s; }
+.switch i { position: absolute; top: 2px; left: 2px; width: 24px; height: 24px; border-radius: 50%; background: #DDD7CB; transition: transform .25s cubic-bezier(.2,.8,.2,1); }
+.switch.on { background: #6FCF8F; border-color: #6FCF8F; }
+.switch.on i { transform: translateX(20px); background: #fff; }
+/* 首頁：捷徑帶入待確認 */
+.inbox-card { display: grid; gap: 8px; padding: 12px; border-radius: 18px; background: rgba(224,164,88,0.07); border: 1px solid rgba(224,164,88,0.3); }
+.inbox-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.inbox-head span { display: flex; align-items: center; gap: 6px; color: var(--gold); font-size: 14px; }
+.inbox-head b { color: var(--text); }
+.inbox-all { font: inherit; font-size: 13px; font-weight: 700; color: #1A1813; background: var(--gold); border: none; border-radius: 10px; padding: 7px 12px; cursor: pointer; }
+.inbox-row { display: flex; align-items: center; gap: 6px; }
+.inbox-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 12px; background: var(--s1); border: 1px solid var(--line); color: var(--text); text-align: left; cursor: pointer; font: inherit; }
+.inbox-txt { flex: 1; min-width: 0; display: grid; gap: 1px; }
+.inbox-txt b { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.inbox-txt small { font-size: 11.5px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.inbox-amt { font-family: Outfit, sans-serif; font-weight: 600; font-size: 16px; flex-shrink: 0; }
+.inbox-skip { flex-shrink: 0; font: inherit; font-size: 12px; color: var(--muted); background: none; border: 1px solid var(--line2); border-radius: 10px; padding: 8px 10px; cursor: pointer; }
+.inbox-hint { font-size: 11.5px; color: var(--faint); line-height: 1.6; }
+@media (prefers-reduced-motion: reduce) { .switch, .switch i { transition: none; } }
